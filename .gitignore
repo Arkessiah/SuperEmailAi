@@ -1,0 +1,90 @@
+# ===========================
+# Swift / Xcode
+# ===========================
+.DS_Store
+*.xcuserstate
+*.xcscmblueprint
+xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+DerivedData/
+build/
+*.moved-aside
+*.orig
+
+# ===========================
+# Swift Package Manager
+# ===========================
+.build/
+.swiftpm/
+*.resolved
+
+# ===========================
+# macOS
+# ===========================
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.TemporaryItems
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# ===========================
+# Xcode
+# ===========================
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+
+# ===========================
+# Credentials / Secrets
+# ===========================
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile
+*.pem
+*.key
+ExportOptions.plist
+AuthKey_*.p8
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# ===========================
+# Editor / IDE
+# ===========================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.cursor/
+
+# ===========================
+# Claude / AI Agents (local context, not for the repo)
+# ===========================
+.claude/
+MEMORY.md
+PLAN.md
+TODO.md
+AGENTS.md
+BCK/
+
+# ===========================
+# Logs / Temporales
+# ===========================
+*.log
+*.tmp
