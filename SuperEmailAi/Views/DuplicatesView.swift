@@ -102,7 +102,7 @@ struct DuplicatesView: View {
             if let group = groupToDelete {
                 let extras = Array(group.messages.dropFirst())
                 DeleteConfirmationView(messages: extras) {
-                    Task { await deleteKeepingOne(group) }
+                    Task { await manager.deleteDuplicateExtras(group) }
                 }
             }
         }
@@ -110,27 +110,5 @@ struct DuplicatesView: View {
 
     private var totalDuplicates: Int {
         manager.duplicateGroups.reduce(0) { $0 + $1.count - 1 }
-    }
-
-    private func deleteKeepingOne(_ group: DuplicateGroup) async {
-        let toDelete = Array(group.messages.dropFirst())
-        let ids = toDelete.map(\.messageId)
-
-        do {
-            _ = try await MailBridge.shared.deleteMessages(
-                ids: ids,
-                mailbox: toDelete.first?.mailbox ?? "INBOX",
-                account: nil
-            )
-            let idsToRemove = Set(toDelete.map(\.id))
-            await MainActor.run {
-                manager.allMessages.removeAll { idsToRemove.contains($0.id) }
-                manager.findDuplicates()
-            }
-        } catch {
-            await MainActor.run {
-                manager.errorMessage = error.localizedDescription
-            }
-        }
     }
 }

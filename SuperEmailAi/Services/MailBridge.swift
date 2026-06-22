@@ -1,6 +1,11 @@
 import Foundation
 
-/// Bridge to interact with Mail.app via AppleScript
+/// Bridge to interact with Mail.app via AppleScript.
+///
+/// Results are read structurally from the returned `NSAppleEventDescriptor`
+/// (a list of records) instead of parsing the coerced string output. This is
+/// robust against subjects/senders that contain characters like `}, {` or
+/// commas, which broke the previous string-splitting approach.
 final class MailBridge {
 
     static let shared = MailBridge()
@@ -9,32 +14,61 @@ final class MailBridge {
     // MARK: - Fetch all messages from a mailbox
 
     func fetchMessages(from mailbox: String = "INBOX", account: String? = nil, limit: Int = 500) async throws -> [MailMessage] {
-        let accountFilter = account.map { "of account \"\($0)\"" } ?? ""
-
-        let script = """
-        tell application "Mail"
-            set msgList to {}
-            set theMessages to messages of mailbox "\(mailbox)" \(accountFilter)
-            set msgCount to count of theMessages
-            if msgCount > \(limit) then set msgCount to \(limit)
-            repeat with i from 1 to msgCount
-                set msg to item i of theMessages
+        // A bare `mailbox "X"` only resolves local ("On My Mac") mailboxes, so
+        // account mailboxes must be qualified `of account`. When no account is
+        // given we iterate every account and tag each message with its real
+        // account name (7th field) so delete/move can target it correctly.
+        let script: String
+        if let account = account {
+            script = """
+            tell application "Mail"
+                set msgList to {}
                 try
-                    set msgSubject to subject of msg
-                    set msgSender to sender of msg
-                    set msgDate to date sent of msg
-                    set msgDateReceived to date received of msg
-                    set msgRead to read status of msg
-                    set msgId to id of msg
-                    set end of msgList to {msgSubject, msgSender, msgDate as string, msgDateReceived as string, msgRead, msgId}
+                    set theMessages to messages of mailbox "\(mailbox)" of account "\(account)"
+                on error
+                    set theMessages to {}
                 end try
-            end repeat
-            return msgList
-        end tell
-        """
+                set msgCount to count of theMessages
+                if msgCount > \(limit) then set msgCount to \(limit)
+                repeat with i from 1 to msgCount
+                    set msg to item i of theMessages
+                    try
+                        set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, "\(account)"}
+                    end try
+                end repeat
+                return msgList
+            end tell
+            """
+        } else {
+            script = """
+            tell application "Mail"
+                set msgList to {}
+                set collected to 0
+                repeat with acc in accounts
+                    set accName to name of acc
+                    try
+                        set theMessages to messages of mailbox "\(mailbox)" of acc
+                    on error
+                        set theMessages to {}
+                    end try
+                    set msgCount to count of theMessages
+                    repeat with i from 1 to msgCount
+                        if collected > \(limit - 1) then exit repeat
+                        set msg to item i of theMessages
+                        try
+                            set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, accName}
+                            set collected to collected + 1
+                        end try
+                    end repeat
+                    if collected > \(limit - 1) then exit repeat
+                end repeat
+                return msgList
+            end tell
+            """
+        }
 
-        let results = try await runAppleScript(script)
-        return parseMessages(results, mailbox: mailbox, account: account ?? "")
+        let descriptor = try await runAppleScript(script)
+        return parseMessages(from: descriptor, mailbox: mailbox)
     }
 
     // MARK: - Get all accounts and mailboxes
@@ -55,8 +89,8 @@ final class MailBridge {
         end tell
         """
 
-        let result = try await runAppleScript(script)
-        return parseAccounts(result)
+        let descriptor = try await runAppleScript(script)
+        return parseAccounts(from: descriptor)
     }
 
     // MARK: - Get all mailbox names for folder picker
@@ -74,96 +108,124 @@ final class MailBridge {
         end tell
         """
 
-        let result = try await runAppleScript(script)
-        return parseStringList(result)
+        let descriptor = try await runAppleScript(script)
+        return parseStringList(from: descriptor)
     }
 
     // MARK: - Delete messages by IDs
 
     func deleteMessages(ids: [Int], mailbox: String, account: String? = nil) async throws -> Int {
+        guard !ids.isEmpty else { return 0 }
         let accountFilter = account.map { "of account \"\($0)\"" } ?? ""
         let idList = ids.map(String.init).joined(separator: ", ")
 
+        // Resolve each target by id with a `whose` filter (evaluated inside Mail)
+        // instead of marshalling every message in the mailbox across Apple Events.
+        // Cost is proportional to the number deleted, not the mailbox size.
         let script = """
         tell application "Mail"
             set deletedCount to 0
-            set theMessages to messages of mailbox "\(mailbox)" \(accountFilter)
-            repeat with msg in theMessages
-                if (id of msg) is in {\(idList)} then
-                    delete msg
+            set theMailbox to mailbox "\(mailbox)" \(accountFilter)
+            repeat with theId in {\(idList)}
+                try
+                    delete (first message of theMailbox whose id is (theId as integer))
                     set deletedCount to deletedCount + 1
-                end if
+                end try
             end repeat
             return deletedCount
         end tell
         """
 
-        let result = try await runAppleScript(script)
-        return Int(result.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+        let descriptor = try await runAppleScript(script)
+        return Int(descriptor.int32Value)
     }
 
     // MARK: - Move messages to a mailbox
 
     func moveMessages(ids: [Int], fromMailbox: String, toMailbox: String, account: String? = nil) async throws -> Int {
+        guard !ids.isEmpty else { return 0 }
         let accountFilter = account.map { "of account \"\($0)\"" } ?? ""
-
         let idList = ids.map(String.init).joined(separator: ", ")
 
         let script = """
         tell application "Mail"
             set movedCount to 0
             set targetMailbox to mailbox "\(toMailbox)" \(accountFilter)
-            set theMessages to messages of mailbox "\(fromMailbox)" \(accountFilter)
-            repeat with msg in theMessages
-                if (id of msg) is in {\(idList)} then
-                    move msg to targetMailbox
+            set theMailbox to mailbox "\(fromMailbox)" \(accountFilter)
+            repeat with theId in {\(idList)}
+                try
+                    move (first message of theMailbox whose id is (theId as integer)) to targetMailbox
                     set movedCount to movedCount + 1
-                end if
+                end try
             end repeat
             return movedCount
         end tell
         """
 
-        let result = try await runAppleScript(script)
-        return Int(result.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+        let descriptor = try await runAppleScript(script)
+        return Int(descriptor.int32Value)
     }
 
     // MARK: - Search messages by sender address
 
     func searchBySender(address: String, mailbox: String = "INBOX", account: String? = nil) async throws -> [MailMessage] {
-        let accountFilter = account.map { "of account \"\($0)\"" } ?? ""
-
-        let script = """
-        tell application "Mail"
-            set msgList to {}
-            set theMessages to (messages of mailbox "\(mailbox)" \(accountFilter) whose sender contains "\(address)")
-            repeat with msg in theMessages
+        let script: String
+        if let account = account {
+            script = """
+            tell application "Mail"
+                set msgList to {}
                 try
-                    set msgSubject to subject of msg
-                    set msgSender to sender of msg
-                    set msgDate to date sent of msg
-                    set msgDateReceived to date received of msg
-                    set msgRead to read status of msg
-                    set msgId to id of msg
-                    set end of msgList to {msgSubject, msgSender, msgDate as string, msgDateReceived as string, msgRead, msgId}
+                    set theMessages to (messages of mailbox "\(mailbox)" of account "\(account)" whose sender contains "\(address)")
+                on error
+                    set theMessages to {}
                 end try
-            end repeat
-            return msgList
-        end tell
-        """
+                repeat with msg in theMessages
+                    try
+                        set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, "\(account)"}
+                    end try
+                end repeat
+                return msgList
+            end tell
+            """
+        } else {
+            script = """
+            tell application "Mail"
+                set msgList to {}
+                repeat with acc in accounts
+                    set accName to name of acc
+                    try
+                        set theMessages to (messages of mailbox "\(mailbox)" of acc whose sender contains "\(address)")
+                    on error
+                        set theMessages to {}
+                    end try
+                    repeat with msg in theMessages
+                        try
+                            set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, accName}
+                        end try
+                    end repeat
+                end repeat
+                return msgList
+            end tell
+            """
+        }
 
-        let results = try await runAppleScript(script)
-        return parseMessages(results, mailbox: mailbox, account: account ?? "")
+        let descriptor = try await runAppleScript(script)
+        return parseMessages(from: descriptor, mailbox: mailbox)
     }
 
     // MARK: - AppleScript execution
 
-    private func runAppleScript(_ source: String) async throws -> String {
+    /// Runs the script and returns the raw `NSAppleEventDescriptor` result so
+    /// callers can read list/record structure directly.
+    private func runAppleScript(_ source: String) async throws -> NSAppleEventDescriptor {
         return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 var error: NSDictionary?
-                let script = NSAppleScript(source: source)
-                let result = script?.executeAndReturnError(&error)
+                guard let script = NSAppleScript(source: source) else {
+                    continuation.resume(throwing: MailBridgeError.scriptError("No se pudo compilar el AppleScript"))
+                    return
+                }
+                let result = script.executeAndReturnError(&error)
 
                 if let error = error {
                     let message = error[NSAppleScript.errorMessage] as? String ?? "Unknown AppleScript error"
@@ -171,91 +233,103 @@ final class MailBridge {
                     return
                 }
 
-                let output = result?.stringValue ?? ""
-                continuation.resume(returning: output)
+                continuation.resume(returning: result)
             }
         }
     }
 
-    // MARK: - Parsing
+    // MARK: - Structured parsing (NSAppleEventDescriptor)
 
-    private func parseMessages(_ raw: String, mailbox: String, account: String) -> [MailMessage] {
-        // AppleScript returns nested list as string; parse it
+    /// Parses a list of message records: `{subject, sender, dateSent, dateReceived, read, id, accountName}`.
+    /// AppleScript list/record indices are 1-based. The account name (7th field)
+    /// is the real owning account so delete/move can target the right mailbox.
+    private func parseMessages(from descriptor: NSAppleEventDescriptor, mailbox: String) -> [MailMessage] {
         var messages: [MailMessage] = []
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateStyle = .full
-        dateFormatter.timeStyle = .full
-        dateFormatter.locale = Locale.current
+        let count = descriptor.numberOfItems
+        guard count > 0 else { return messages }
 
-        // Split by record boundaries
-        let cleaned = raw
-            .replacingOccurrences(of: "{{", with: "{")
-            .replacingOccurrences(of: "}}", with: "}")
+        for i in 1...count {
+            guard let record = descriptor.atIndex(i), record.numberOfItems >= 6 else { continue }
 
-        let records = cleaned.components(separatedBy: "}, {")
-
-        for record in records {
-            let trimmed = record
-                .replacingOccurrences(of: "{", with: "")
-                .replacingOccurrences(of: "}", with: "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-
-            let parts = splitAppleScriptRecord(trimmed)
-            guard parts.count >= 6 else { continue }
-
-            let subject = parts[0].trimmingCharacters(in: .init(charactersIn: "\" "))
-            let senderRaw = parts[1].trimmingCharacters(in: .init(charactersIn: "\" "))
-            let dateSentStr = parts[2].trimmingCharacters(in: .init(charactersIn: "\" "))
-            let dateRecStr = parts[3].trimmingCharacters(in: .init(charactersIn: "\" "))
-            let isReadStr = parts[4].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let idStr = parts[5].trimmingCharacters(in: .whitespacesAndNewlines)
+            let subject = record.atIndex(1)?.stringValue ?? "(sin asunto)"
+            let senderRaw = record.atIndex(2)?.stringValue ?? ""
+            let dateSent = record.atIndex(3)?.dateValue ?? Date()
+            let dateReceived = record.atIndex(4)?.dateValue ?? Date()
+            let isRead = record.atIndex(5)?.booleanValue ?? false
+            let messageId = Int(record.atIndex(6)?.int32Value ?? 0)
+            let account = record.numberOfItems >= 7 ? (record.atIndex(7)?.stringValue ?? "") : ""
 
             let senderAddress = extractEmail(from: senderRaw)
             let senderName = extractName(from: senderRaw)
 
-            let msg = MailMessage(
-                id: "\(account)-\(mailbox)-\(idStr)",
+            messages.append(MailMessage(
+                id: "\(account)-\(mailbox)-\(messageId)",
                 subject: subject,
                 sender: senderName,
                 senderAddress: senderAddress,
-                dateSent: dateFormatter.date(from: dateSentStr) ?? Date(),
-                dateReceived: dateFormatter.date(from: dateRecStr) ?? Date(),
-                isRead: isReadStr == "true",
+                dateSent: dateSent,
+                dateReceived: dateReceived,
+                isRead: isRead,
                 mailbox: mailbox,
                 account: account,
-                messageId: Int(idStr) ?? 0
-            )
-            messages.append(msg)
+                messageId: messageId
+            ))
         }
 
         return messages
     }
 
-    private func splitAppleScriptRecord(_ record: String) -> [String] {
-        var parts: [String] = []
-        var current = ""
-        var inQuotes = false
+    /// Parses a list of account records: `{accountName, {mailboxName, ...}}`.
+    private func parseAccounts(from descriptor: NSAppleEventDescriptor) -> [(name: String, mailboxes: [String])] {
+        var accounts: [(name: String, mailboxes: [String])] = []
+        let count = descriptor.numberOfItems
+        guard count > 0 else { return accounts }
 
-        for char in record {
-            if char == "\"" {
-                inQuotes.toggle()
-                current.append(char)
-            } else if char == "," && !inQuotes {
-                parts.append(current.trimmingCharacters(in: .whitespaces))
-                current = ""
-            } else {
-                current.append(char)
+        for i in 1...count {
+            guard let entry = descriptor.atIndex(i), entry.numberOfItems >= 2 else { continue }
+
+            let name = entry.atIndex(1)?.stringValue ?? ""
+            guard !name.isEmpty else { continue }
+
+            var mailboxes: [String] = []
+            if let mbList = entry.atIndex(2) {
+                let mbCount = mbList.numberOfItems
+                if mbCount > 0 {
+                    for j in 1...mbCount {
+                        if let mb = mbList.atIndex(j)?.stringValue, !mb.isEmpty {
+                            mailboxes.append(mb)
+                        }
+                    }
+                }
+            }
+
+            accounts.append((name: name, mailboxes: mailboxes))
+        }
+
+        return accounts
+    }
+
+    /// Parses a flat AppleScript list of strings.
+    private func parseStringList(from descriptor: NSAppleEventDescriptor) -> [String] {
+        var items: [String] = []
+        let count = descriptor.numberOfItems
+        guard count > 0 else { return items }
+
+        for i in 1...count {
+            if let value = descriptor.atIndex(i)?.stringValue, !value.isEmpty {
+                items.append(value)
             }
         }
-        if !current.isEmpty {
-            parts.append(current.trimmingCharacters(in: .whitespaces))
-        }
-        return parts
+
+        return items
     }
+
+    // MARK: - Sender parsing helpers
 
     private func extractEmail(from sender: String) -> String {
         if let start = sender.lastIndex(of: "<"),
-           let end = sender.lastIndex(of: ">") {
+           let end = sender.lastIndex(of: ">"),
+           start < end {
             return String(sender[sender.index(after: start)..<end]).lowercased()
         }
         // Already just an email
@@ -272,20 +346,6 @@ final class MailBridge {
             return name.isEmpty ? extractEmail(from: sender) : name
         }
         return sender
-    }
-
-    private func parseAccounts(_ raw: String) -> [(name: String, mailboxes: [String])] {
-        // Simplified parsing
-        return []
-    }
-
-    private func parseStringList(_ raw: String) -> [String] {
-        return raw
-            .replacingOccurrences(of: "{", with: "")
-            .replacingOccurrences(of: "}", with: "")
-            .components(separatedBy: ",")
-            .map { $0.trimmingCharacters(in: .init(charactersIn: "\" \n\r\t")) }
-            .filter { !$0.isEmpty }
     }
 }
 

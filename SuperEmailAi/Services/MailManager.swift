@@ -88,24 +88,50 @@ final class MailManager: ObservableObject {
         isLoading = false
     }
 
+    // MARK: - Bridge helpers (group by real account + mailbox)
+
+    private static let targetSeparator = "\u{0001}"
+
+    /// Deletes the given messages, grouping them by their real account + mailbox
+    /// so each delete is correctly qualified `of account`.
+    private func bridgeDelete(_ messages: [MailMessage]) async throws -> Int {
+        let groups = Dictionary(grouping: messages) { "\($0.account)\(Self.targetSeparator)\($0.mailbox)" }
+        var total = 0
+        for (key, msgs) in groups {
+            let parts = key.components(separatedBy: Self.targetSeparator)
+            let account = parts.first.flatMap { $0.isEmpty ? nil : $0 }
+            let mailbox = parts.count > 1 ? parts[1] : currentMailbox
+            total += try await bridge.deleteMessages(ids: msgs.map(\.messageId), mailbox: mailbox, account: account)
+        }
+        return total
+    }
+
+    /// Moves the given messages to `targetMailbox`, grouping by their real
+    /// account + mailbox. The target is resolved within each source account.
+    private func bridgeMove(_ messages: [MailMessage], to targetMailbox: String) async throws -> Int {
+        let groups = Dictionary(grouping: messages) { "\($0.account)\(Self.targetSeparator)\($0.mailbox)" }
+        var total = 0
+        for (key, msgs) in groups {
+            let parts = key.components(separatedBy: Self.targetSeparator)
+            let account = parts.first.flatMap { $0.isEmpty ? nil : $0 }
+            let mailbox = parts.count > 1 ? parts[1] : currentMailbox
+            total += try await bridge.moveMessages(ids: msgs.map(\.messageId), fromMailbox: mailbox, toMailbox: targetMailbox, account: account)
+        }
+        return total
+    }
+
     // MARK: - Delete messages
 
     func deleteSelectedMessages() async {
         guard !selectedMessages.isEmpty else { return }
 
-        let ids = allMessages
-            .filter { selectedMessages.contains($0.id) }
-            .map(\.messageId)
+        let toDelete = allMessages.filter { selectedMessages.contains($0.id) }
 
         isLoading = true
-        statusMessage = "Eliminando \(ids.count) correos..."
+        statusMessage = "Eliminando \(toDelete.count) correos..."
 
         do {
-            let count = try await bridge.deleteMessages(
-                ids: ids,
-                mailbox: currentMailbox,
-                account: currentAccount
-            )
+            let count = try await bridgeDelete(toDelete)
             statusMessage = "\(count) correos eliminados"
             allMessages.removeAll { selectedMessages.contains($0.id) }
             selectedMessages.removeAll()
@@ -120,17 +146,11 @@ final class MailManager: ObservableObject {
     }
 
     func deleteMessagesFromSender(_ sender: SenderGroup) async {
-        let ids = sender.messages.map(\.messageId)
-
         isLoading = true
-        statusMessage = "Eliminando \(ids.count) correos de \(sender.displayName)..."
+        statusMessage = "Eliminando \(sender.messages.count) correos de \(sender.displayName)..."
 
         do {
-            let count = try await bridge.deleteMessages(
-                ids: ids,
-                mailbox: currentMailbox,
-                account: currentAccount
-            )
+            let count = try await bridgeDelete(sender.messages)
             statusMessage = "\(count) correos eliminados"
             let idsToRemove = Set(sender.messages.map(\.id))
             allMessages.removeAll { idsToRemove.contains($0.id) }
@@ -148,20 +168,13 @@ final class MailManager: ObservableObject {
     func moveSelectedMessages(to targetMailbox: String) async {
         guard !selectedMessages.isEmpty else { return }
 
-        let ids = allMessages
-            .filter { selectedMessages.contains($0.id) }
-            .map(\.messageId)
+        let toMove = allMessages.filter { selectedMessages.contains($0.id) }
 
         isLoading = true
-        statusMessage = "Moviendo \(ids.count) correos a \(targetMailbox)..."
+        statusMessage = "Moviendo \(toMove.count) correos a \(targetMailbox)..."
 
         do {
-            let count = try await bridge.moveMessages(
-                ids: ids,
-                fromMailbox: currentMailbox,
-                toMailbox: targetMailbox,
-                account: currentAccount
-            )
+            let count = try await bridgeMove(toMove, to: targetMailbox)
             statusMessage = "\(count) correos movidos a \(targetMailbox)"
             allMessages.removeAll { selectedMessages.contains($0.id) }
             selectedMessages.removeAll()
@@ -175,18 +188,11 @@ final class MailManager: ObservableObject {
     }
 
     func moveMessagesFromSender(_ sender: SenderGroup, to targetMailbox: String) async {
-        let ids = sender.messages.map(\.messageId)
-
         isLoading = true
-        statusMessage = "Moviendo \(ids.count) correos de \(sender.displayName) a \(targetMailbox)..."
+        statusMessage = "Moviendo \(sender.messages.count) correos de \(sender.displayName) a \(targetMailbox)..."
 
         do {
-            let count = try await bridge.moveMessages(
-                ids: ids,
-                fromMailbox: currentMailbox,
-                toMailbox: targetMailbox,
-                account: currentAccount
-            )
+            let count = try await bridgeMove(sender.messages, to: targetMailbox)
             statusMessage = "\(count) correos movidos"
             let idsToRemove = Set(sender.messages.map(\.id))
             allMessages.removeAll { idsToRemove.contains($0.id) }
@@ -210,6 +216,33 @@ final class MailManager: ObservableObject {
             .filter { $0.value.count > 1 }
             .map { DuplicateGroup(subject: $0.value.first?.subject ?? "", sender: $0.value.first?.senderAddress ?? "", messages: $0.value) }
             .sorted { $0.count > $1.count }
+    }
+
+    /// Deletes the extra copies of a duplicate group, keeping the first one.
+    /// Routes through the bridge here (not from the view) and groups messages by
+    /// account + mailbox, since duplicates can live in different mailboxes.
+    func deleteDuplicateExtras(_ group: DuplicateGroup) async {
+        let toDelete = Array(group.messages.dropFirst())
+        guard !toDelete.isEmpty else { return }
+
+        isLoading = true
+        statusMessage = "Eliminando \(toDelete.count) duplicados..."
+
+        do {
+            let deletedTotal = try await bridgeDelete(toDelete)
+
+            let idsToRemove = Set(toDelete.map(\.id))
+            allMessages.removeAll { idsToRemove.contains($0.id) }
+            buildSenderGroups()
+            applyFilters()
+            findDuplicates()
+            statusMessage = "\(deletedTotal) duplicados eliminados"
+        } catch {
+            errorMessage = error.localizedDescription
+            statusMessage = "Error al eliminar duplicados"
+        }
+
+        isLoading = false
     }
 
     // MARK: - Selection
@@ -246,6 +279,12 @@ final class MailManager: ObservableObject {
         }
 
         applySortOrder()
+
+        // Keep the selected sender pointing at the freshly rebuilt group so the
+        // detail list reflects deletes/moves (becomes nil if it has no messages left).
+        if let current = selectedSender {
+            selectedSender = senderGroups.first { $0.id == current.id }
+        }
     }
 
     func applySortOrder() {
