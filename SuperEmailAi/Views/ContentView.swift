@@ -28,10 +28,24 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 HStack(spacing: 12) {
+                    // Account picker
+                    Picker("Cuenta", selection: Binding(
+                        get: { manager.currentAccount },
+                        set: { newValue in Task { await manager.selectAccount(newValue) } }
+                    )) {
+                        Text("Todas las cuentas").tag(String?.none)
+                        ForEach(manager.accounts) { acc in
+                            Text(acc.name).tag(String?.some(acc.name))
+                        }
+                    }
+                    .frame(width: 170)
+
                     // Mailbox picker
-                    Picker("Buzon", selection: $manager.currentMailbox) {
-                        Text("INBOX").tag("INBOX")
-                        ForEach(manager.mailboxes.filter { $0 != "INBOX" }, id: \.self) { mb in
+                    Picker("Buzon", selection: Binding(
+                        get: { manager.currentMailbox },
+                        set: { newValue in Task { await manager.selectMailbox(newValue) } }
+                    )) {
+                        ForEach(manager.mailboxes, id: \.self) { mb in
                             Text(mb).tag(mb)
                         }
                     }
@@ -58,10 +72,8 @@ struct ContentView: View {
             StatusBar()
         }
         .task {
-            await manager.loadMailboxes()
-        }
-        .onChange(of: manager.currentMailbox) {
-            Task { await manager.loadMessages() }
+            await manager.loadAccounts()
+            await manager.loadMessages()
         }
     }
 }

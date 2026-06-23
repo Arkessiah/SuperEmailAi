@@ -11,6 +11,7 @@ final class MailManager: ObservableObject {
     @Published var filteredMessages: [MailMessage] = []
     @Published var duplicateGroups: [DuplicateGroup] = []
     @Published var mailboxes: [String] = []
+    @Published var accounts: [MailAccount] = []
 
     @Published var searchText: String = "" { didSet { applyFilters() } }
     @Published var selectedSender: SenderGroup? = nil
@@ -59,12 +60,47 @@ final class MailManager: ObservableObject {
         isLoading = false
     }
 
-    func loadMailboxes() async {
+    // MARK: - Accounts
+
+    func loadAccounts() async {
         do {
-            mailboxes = try await bridge.fetchMailboxNames()
+            accounts = try await bridge.fetchAccounts()
+                .map { MailAccount(name: $0.name, mailboxes: $0.mailboxes) }
         } catch {
+            accounts = []
+        }
+        rebuildMailboxList()
+    }
+
+    /// Rebuilds `mailboxes` for the current account selection: a single account's
+    /// mailboxes, or the deduplicated union across all accounts ("Todas").
+    private func rebuildMailboxList() {
+        if let account = currentAccount, let match = accounts.first(where: { $0.name == account }) {
+            mailboxes = match.mailboxes
+        } else if !accounts.isEmpty {
+            var seen = Set<String>()
+            mailboxes = accounts.flatMap(\.mailboxes).filter { seen.insert($0).inserted }
+        } else {
             mailboxes = ["INBOX", "Sent Messages", "Drafts", "Trash", "Junk"]
         }
+
+        // Keep the current mailbox valid for the new list.
+        if !mailboxes.contains(currentMailbox) {
+            currentMailbox = mailboxes.contains("INBOX") ? "INBOX" : (mailboxes.first ?? "INBOX")
+        }
+    }
+
+    /// Selects an account (nil = all accounts), refreshes its mailboxes and reloads.
+    func selectAccount(_ account: String?) async {
+        currentAccount = account
+        rebuildMailboxList()
+        await loadMessages()
+    }
+
+    /// Selects a mailbox and reloads its messages.
+    func selectMailbox(_ mailbox: String) async {
+        currentMailbox = mailbox
+        await loadMessages()
     }
 
     // MARK: - Search by sender

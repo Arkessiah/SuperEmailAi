@@ -45,3 +45,15 @@ struct DuplicateGroup: Identifiable {
     let messages: [MailMessage]
     var count: Int { messages.count }
 }
+
+struct MailAccount: Identifiable, Hashable {
+    let id: String        // account name (unique in Mail.app)
+    let name: String
+    let mailboxes: [String]
+
+    init(name: String, mailboxes: [String]) {
+        self.id = name
+        self.name = name
+        self.mailboxes = mailboxes
+    }
+}
