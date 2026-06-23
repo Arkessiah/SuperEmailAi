@@ -7,24 +7,28 @@ enum MIMEParser {
 
     static func htmlBody(fromSource source: String) -> String? {
         let normalized = source.replacingOccurrences(of: "\r\n", with: "\n")
-        let html = findHTML(in: normalized)
-        // Guard against returning something that isn't really HTML.
-        if let html, html.range(of: "<", options: .caseInsensitive) != nil {
-            return html
-        }
-        return nil
+        guard let html = findHTML(in: normalized, depth: 0) else { return nil }
+        // Only return if it actually looks like HTML.
+        return html.contains("<") ? html : nil
     }
 
     /// Recursively walks MIME parts (handles nested multipart) and returns the
-    /// last text/html leaf found, decoded.
-    private static func findHTML(in block: String) -> String? {
-        if let boundary = boundary(in: block) {
+    /// last text/html leaf found, decoded. Recursion is bounded: it only recurses
+    /// when the boundary actually splits the block into strictly smaller pieces,
+    /// and never deeper than `maxDepth`.
+    private static let maxDepth = 12
+
+    private static func findHTML(in block: String, depth: Int) -> String? {
+        if depth < maxDepth, let boundary = boundary(in: block) {
             let parts = block.components(separatedBy: "--\(boundary)")
-            var found: String?
-            for part in parts {
-                if let html = findHTML(in: part) { found = html }
+            if parts.count > 1 {
+                var found: String?
+                for part in parts where part.count < block.count {
+                    if let html = findHTML(in: part, depth: depth + 1) { found = html }
+                }
+                if let found { return found }
+                // No HTML in the sub-parts; fall through to leaf handling.
             }
-            return found
         }
 
         guard let headerEnd = block.range(of: "\n\n") else { return nil }
@@ -44,13 +48,21 @@ enum MIMEParser {
         return body
     }
 
+    /// Extracts the MIME boundary value from a headers block (no regex).
     private static func boundary(in block: String) -> String? {
-        guard let range = block.range(of: #"boundary="?([^";\n]+)"?"#, options: [.regularExpression, .caseInsensitive]) else {
-            return nil
-        }
-        var value = String(block[range])
-        if let eq = value.firstIndex(of: "=") {
-            value = String(value[value.index(after: eq)...])
+        guard let r = block.range(of: "boundary=", options: .caseInsensitive) else { return nil }
+        var value = ""
+        var inQuote = false
+        for ch in block[r.upperBound...] {
+            if ch == "\"" {
+                if inQuote { break }
+                inQuote = true
+                continue
+            }
+            if !inQuote && (ch == ";" || ch == "\n" || ch == "\r") { break }
+            if !inQuote && ch == " " && value.isEmpty { continue }
+            value.append(ch)
+            if value.count > 200 { break }   // safety
         }
         value = value.trimmingCharacters(in: CharacterSet(charactersIn: "\"; \n\r\t"))
         return value.isEmpty ? nil : value
