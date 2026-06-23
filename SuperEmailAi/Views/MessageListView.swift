@@ -19,9 +19,29 @@ struct MessageListView: View {
     }
 
     var body: some View {
-        HSplitView {
+        Group {
+            if manager.isReadingOpen {
+                HSplitView {
+                    listColumn
+                        .frame(minWidth: 380)
+                    MessageDetailPane()
+                        .frame(minWidth: 340, idealWidth: 460)
+                }
+            } else {
+                listColumn
+            }
+        }
+        .sheet(isPresented: $showDeleteConfirmation) {
+            DeleteConfirmationView(messages: messagesToDelete) {
+                Task { await manager.deleteSelectedMessages() }
+            }
+        }
+    }
+
+    // MARK: - List column
+
+    private var listColumn: some View {
         VStack(spacing: 0) {
-            // Header with sender info and actions
             if let sender = manager.selectedSender {
                 SenderHeader(
                     sender: sender,
@@ -32,7 +52,7 @@ struct MessageListView: View {
                 )
             }
 
-            // Search within results
+            // Search + bulk actions
             HStack {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
@@ -41,7 +61,6 @@ struct MessageListView: View {
 
                 Spacer()
 
-                // Bulk actions
                 if !manager.selectedMessages.isEmpty {
                     BulkActionButtons(
                         showMoveSheet: $showMoveSheet,
@@ -51,7 +70,6 @@ struct MessageListView: View {
                     )
                 }
 
-                // Select all / none
                 Button {
                     if manager.selectedMessages.count == displayedMessages.count {
                         manager.deselectAll()
@@ -70,7 +88,6 @@ struct MessageListView: View {
 
             Divider()
 
-            // Message table
             if displayedMessages.isEmpty {
                 ContentUnavailableView {
                     Label(
@@ -78,148 +95,80 @@ struct MessageListView: View {
                         systemImage: manager.allMessages.isEmpty ? "tray" : "magnifyingglass"
                     )
                 } description: {
-                    if manager.allMessages.isEmpty {
-                        Text("Pulsa Cmd+R para cargar correos del buzon seleccionado")
-                    } else {
-                        Text("Prueba con otro termino de busqueda")
-                    }
+                    Text(manager.allMessages.isEmpty
+                         ? "Selecciona un buzón para cargar correos"
+                         : "Prueba con otro termino de busqueda")
                 }
             } else {
-                Table(displayedMessages, selection: $manager.selectedMessages) {
-                    TableColumn("") { msg in
-                        Image(systemName: msg.isRead ? "envelope.open" : "envelope.fill")
-                            .foregroundStyle(msg.isRead ? Color.secondary : Color.blue)
-                            .font(.caption)
-                    }
-                    .width(24)
-
-                    TableColumn("Remitente") { msg in
-                        VStack(alignment: .leading) {
-                            Text(msg.sender)
-                                .font(.system(.body, weight: msg.isRead ? .regular : .semibold))
-                                .lineLimit(1)
-                            Text(msg.senderAddress)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                    }
-                    .width(min: 150, ideal: 200)
-
-                    TableColumn("Asunto") { msg in
-                        Text(msg.subject)
-                            .font(.system(.body, weight: msg.isRead ? .regular : .semibold))
-                            .lineLimit(2)
-                    }
-                    .width(min: 200, ideal: 350)
-
-                    TableColumn("Fecha") { msg in
-                        Text(msg.dateReceived, style: .date)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .width(min: 80, ideal: 100)
-
-                    TableColumn("Buzon") { msg in
-                        Text(msg.mailbox)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .width(min: 60, ideal: 80)
-                }
-                .contextMenu(forSelectionType: String.self) { ids in
-                    if !ids.isEmpty {
-                        Button(role: .destructive) {
-                            manager.selectedMessages = ids
-                            messagesToDelete = manager.allMessages.filter { ids.contains($0.id) }
-                            showDeleteConfirmation = true
-                        } label: {
-                            Label("Eliminar \(ids.count) correos", systemImage: "trash")
-                        }
-
-                        Button {
-                            manager.selectedMessages = ids
-                            moveTarget = .selected
-                            showMoveSheet = true
-                        } label: {
-                            Label("Mover \(ids.count) correos...", systemImage: "folder")
-                        }
+                List(selection: $manager.selectedMessages) {
+                    ForEach(displayedMessages) { msg in
+                        MessageRow(message: msg)
+                            .tag(msg.id)
+                            .contentShape(Rectangle())
+                            .simultaneousGesture(TapGesture(count: 2).onEnded {
+                                Task { await manager.openForReading(msg) }
+                            })
+                            .contextMenu {
+                                let targets = manager.selectedMessages.contains(msg.id)
+                                    ? displayedMessages.filter { manager.selectedMessages.contains($0.id) }
+                                    : [msg]
+                                Button {
+                                    Task { await manager.openForReading(msg) }
+                                } label: {
+                                    Label("Abrir", systemImage: "envelope.open")
+                                }
+                                Divider()
+                                Button(role: .destructive) {
+                                    manager.selectedMessages = Set(targets.map(\.id))
+                                    messagesToDelete = targets
+                                    showDeleteConfirmation = true
+                                } label: {
+                                    Label("Eliminar \(targets.count)", systemImage: "trash")
+                                }
+                                Button {
+                                    manager.selectedMessages = Set(targets.map(\.id))
+                                    moveTarget = .selected
+                                    showMoveSheet = true
+                                } label: {
+                                    Label("Mover \(targets.count)…", systemImage: "folder")
+                                }
+                            }
                     }
                 }
-            }
-        }
-        .frame(minWidth: 380)
-
-        MessageDetailPane()
-            .frame(minWidth: 320, idealWidth: 440)
-        }
-        .sheet(isPresented: $showDeleteConfirmation) {
-            DeleteConfirmationView(messages: messagesToDelete) {
-                Task { await manager.deleteSelectedMessages() }
-            }
-        }
-        .onChange(of: manager.selectedMessages) { _, newValue in
-            if newValue.count == 1, let id = newValue.first,
-               let msg = manager.filteredMessages.first(where: { $0.id == id }) {
-                Task { await manager.openMessage(msg) }
+                .listStyle(.inset)
             }
         }
     }
 }
 
-// MARK: - Message Detail (reading pane)
+// MARK: - Message Row (email-style)
 
-struct MessageDetailPane: View {
-    @EnvironmentObject var manager: MailManager
+struct MessageRow: View {
+    let message: MailMessage
 
     var body: some View {
-        if manager.selectedMessages.count == 1, let msg = manager.openedMessage {
-            VStack(alignment: .leading, spacing: 0) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(msg.subject)
-                        .font(.title3.bold())
-                        .textSelection(.enabled)
-                    HStack(spacing: 6) {
-                        Text(msg.sender)
-                            .font(.subheadline.weight(.medium))
-                        Text("<\(msg.senderAddress)>")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                    Text(msg.dateReceived.formatted(date: .abbreviated, time: .shortened))
+        HStack(spacing: 10) {
+            Circle()
+                .fill(message.isRead ? Color.clear : Color.accentColor)
+                .frame(width: 8, height: 8)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Text(message.sender)
+                        .font(.system(.body, weight: message.isRead ? .regular : .semibold))
+                        .lineLimit(1)
+                    Spacer()
+                    Text(message.dateReceived, style: .date)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-
-                Divider()
-
-                if manager.isLoadingBody {
-                    ProgressView()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    ScrollView {
-                        Text(manager.openedBody)
-                            .font(.body)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(12)
-                    }
-                }
-            }
-        } else {
-            ContentUnavailableView {
-                Label(
-                    manager.selectedMessages.count > 1 ? "\(manager.selectedMessages.count) seleccionados" : "Sin correo abierto",
-                    systemImage: "envelope.open"
-                )
-            } description: {
-                Text(manager.selectedMessages.count > 1
-                     ? "Modo selección múltiple para acciones en bloque."
-                     : "Selecciona un correo para leerlo.")
+                Text(message.subject)
+                    .font(.subheadline)
+                    .foregroundStyle(message.isRead ? .secondary : .primary)
+                    .lineLimit(1)
             }
         }
+        .padding(.vertical, 4)
     }
 }
 
@@ -261,7 +210,6 @@ struct SenderHeader: View {
 
                 Button(role: .destructive) {
                     messagesToDelete = sender.messages
-                    // Select them so deleteSelectedMessages works
                     manager.selectedMessages = Set(sender.messages.map(\.id))
                     showDeleteConfirmation = true
                 } label: {
@@ -317,6 +265,68 @@ struct BulkActionButtons: View {
                     .font(.caption)
             }
             .buttonStyle(.bordered)
+        }
+    }
+}
+
+// MARK: - Message Detail (reading pane)
+
+struct MessageDetailPane: View {
+    @EnvironmentObject var manager: MailManager
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Button {
+                    manager.closeReading()
+                } label: {
+                    Label("Cerrar", systemImage: "xmark")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                Spacer()
+            }
+            .padding(8)
+
+            Divider()
+
+            if let msg = manager.openedMessage {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(msg.subject)
+                        .font(.title3.bold())
+                        .textSelection(.enabled)
+                    HStack(spacing: 6) {
+                        Text(msg.sender)
+                            .font(.subheadline.weight(.medium))
+                        Text("<\(msg.senderAddress)>")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(msg.dateReceived.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+
+                Divider()
+
+                if manager.isLoadingBody {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        Text(manager.openedBody)
+                            .font(.body)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(12)
+                    }
+                }
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
     }
 }

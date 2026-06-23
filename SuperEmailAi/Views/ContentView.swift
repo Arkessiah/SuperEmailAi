@@ -13,9 +13,16 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            SidebarView(showDuplicates: $showDuplicates)
+            Group {
+                switch manager.mode {
+                case .lectura:
+                    MailboxSidebarView()
+                case .limpieza:
+                    SidebarView(showDuplicates: $showDuplicates)
+                }
+            }
         } detail: {
-            if showDuplicates {
+            if manager.mode == .limpieza && showDuplicates {
                 DuplicatesView()
             } else {
                 MessageListView(
@@ -26,6 +33,15 @@ struct ContentView: View {
         }
         .navigationTitle("Super Email Organizer")
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("Modo", selection: $manager.mode) {
+                    ForEach(MailManager.AppMode.allCases, id: \.self) { m in
+                        Text(m.rawValue).tag(m)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 220)
+            }
             ToolbarItem(placement: .automatic) {
                 HStack(spacing: 12) {
                     // Account picker
@@ -76,6 +92,9 @@ struct ContentView: View {
             await manager.loadAccounts()
             await manager.loadMessages()
             await manager.prefetchAllMailboxes()
+        }
+        .onChange(of: manager.mode) {
+            showDuplicates = false
         }
     }
 }

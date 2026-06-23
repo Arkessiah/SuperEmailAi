@@ -28,9 +28,18 @@ final class MailManager: ObservableObject {
     @Published var sortOrder: SortOrder = .countDesc
 
     // Reading pane
+    @Published var isReadingOpen = false
     @Published var openedMessage: MailMessage?
     @Published var openedBody: String = ""
     @Published var isLoadingBody = false
+
+    /// App mode: a standard reader (Spark-like) vs the sender-grouping cleanup tool.
+    @Published var mode: AppMode = .lectura
+
+    enum AppMode: String, CaseIterable {
+        case lectura = "Lectura"
+        case limpieza = "Limpieza"
+    }
 
     enum SortOrder: String, CaseIterable {
         case countDesc = "Mas correos"
@@ -100,6 +109,18 @@ final class MailManager: ObservableObject {
     }
 
     // MARK: - Reading a message
+
+    /// Opens the reading pane (right column) for a message and loads its body.
+    func openForReading(_ message: MailMessage) async {
+        isReadingOpen = true
+        await openMessage(message)
+    }
+
+    /// Closes the reading pane.
+    func closeReading() {
+        isReadingOpen = false
+        openedMessage = nil
+    }
 
     /// Loads the body of a message into the reading pane.
     func openMessage(_ message: MailMessage) async {
@@ -180,6 +201,15 @@ final class MailManager: ObservableObject {
     /// Selects a mailbox and reloads its messages.
     func selectMailbox(_ mailbox: String) async {
         currentMailbox = mailbox
+        await loadMessages()
+    }
+
+    /// Opens a specific account+mailbox (used by the reader's folder sidebar).
+    func openMailbox(account: String?, mailbox: String) async {
+        currentAccount = account
+        currentMailbox = mailbox
+        selectedSender = nil
+        rebuildMailboxList()
         await loadMessages()
     }
 
