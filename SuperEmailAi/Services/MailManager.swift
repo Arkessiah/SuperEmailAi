@@ -18,6 +18,7 @@ final class MailManager: ObservableObject {
     @Published var selectedMessages: Set<String> = []
 
     @Published var isLoading = false
+    @Published var isRefreshing = false
     @Published var statusMessage = "Listo"
     @Published var errorMessage: String?
 
@@ -25,6 +26,11 @@ final class MailManager: ObservableObject {
     @Published var currentAccount: String? = nil
 
     @Published var sortOrder: SortOrder = .countDesc
+
+    // Reading pane
+    @Published var openedMessage: MailMessage?
+    @Published var openedBody: String = ""
+    @Published var isLoadingBody = false
 
     enum SortOrder: String, CaseIterable {
         case countDesc = "Mas correos"
@@ -36,38 +42,97 @@ final class MailManager: ObservableObject {
     }
 
     private let bridge = MailBridge.shared
+    private let cache = MailCache.shared
 
     // MARK: - Load messages
 
+    /// Populates the UI from the cache synchronously (instant, no Mail.app round-trip).
+    /// Used on launch so the last messages show immediately before refreshing.
+    func showCachedInstantly() {
+        if !cache.accounts.isEmpty {
+            accounts = cache.accounts
+            rebuildMailboxList()
+        }
+        if let cached = cache.messages(account: currentAccount, mailbox: currentMailbox), !cached.isEmpty {
+            allMessages = cached
+            buildSenderGroups()
+            applyFilters()
+            statusMessage = "\(cached.count) en caché · actualizando…"
+        }
+    }
+
+    /// Cache-first load: shows cached messages instantly (if any), then refreshes
+    /// from Mail.app in the background and updates both the UI and the cache.
     func loadMessages(limit: Int = 1000) async {
-        isLoading = true
-        statusMessage = "Cargando correos de \(currentMailbox)..."
         errorMessage = nil
 
+        let cached = cache.messages(account: currentAccount, mailbox: currentMailbox)
+        if let cached, !cached.isEmpty {
+            allMessages = cached
+            buildSenderGroups()
+            applyFilters()
+            statusMessage = "\(cached.count) en caché · actualizando…"
+            isRefreshing = true
+            isLoading = false
+        } else {
+            isLoading = true
+            statusMessage = "Cargando correos de \(currentMailbox)…"
+        }
+
         do {
-            allMessages = try await bridge.fetchMessages(
+            let fresh = try await bridge.fetchMessages(
                 from: currentMailbox,
                 account: currentAccount,
                 limit: limit
             )
+            allMessages = fresh
             buildSenderGroups()
-            statusMessage = "\(allMessages.count) correos cargados"
+            applyFilters()
+            cache.update(fresh, account: currentAccount, mailbox: currentMailbox)
+            statusMessage = "\(fresh.count) correos"
         } catch {
             errorMessage = error.localizedDescription
-            statusMessage = "Error al cargar"
+            if allMessages.isEmpty { statusMessage = "Error al cargar" }
         }
 
         isLoading = false
+        isRefreshing = false
+    }
+
+    // MARK: - Reading a message
+
+    /// Loads the body of a message into the reading pane.
+    func openMessage(_ message: MailMessage) async {
+        openedMessage = message
+        openedBody = ""
+        isLoadingBody = true
+        do {
+            let account = message.account.isEmpty ? nil : message.account
+            openedBody = try await bridge.fetchMessageContent(
+                id: message.messageId,
+                mailbox: message.mailbox,
+                account: account
+            )
+        } catch {
+            openedBody = "(No se pudo cargar el contenido: \(error.localizedDescription))"
+        }
+        isLoadingBody = false
     }
 
     // MARK: - Accounts
 
     func loadAccounts() async {
+        if accounts.isEmpty, !cache.accounts.isEmpty {
+            accounts = cache.accounts
+            rebuildMailboxList()
+        }
         do {
-            accounts = try await bridge.fetchAccounts()
+            let fresh = try await bridge.fetchAccounts()
                 .map { MailAccount(name: $0.name, mailboxes: $0.mailboxes) }
+            accounts = fresh
+            cache.setAccounts(fresh)
         } catch {
-            accounts = []
+            // Keep cached/previous accounts on failure.
         }
         rebuildMailboxList()
     }
@@ -87,6 +152,21 @@ final class MailManager: ObservableObject {
         // Keep the current mailbox valid for the new list.
         if !mailboxes.contains(currentMailbox) {
             currentMailbox = mailboxes.contains("INBOX") ? "INBOX" : (mailboxes.first ?? "INBOX")
+        }
+    }
+
+    /// Background warm-up: fetches the most recent INBOX messages of each account
+    /// into the cache, so selecting an account is instant on future visits. Kept
+    /// light (one mailbox per account) to avoid hammering Mail; silent and
+    /// cancellable.
+    func prefetchAllMailboxes(perMailbox: Int = 50) async {
+        let mailbox = "INBOX"
+        for account in accounts {
+            if Task.isCancelled { return }
+            if account.name == currentAccount && mailbox == currentMailbox { continue }
+            if let fresh = try? await bridge.fetchMessages(from: mailbox, account: account.name, limit: perMailbox) {
+                cache.update(fresh, account: account.name, mailbox: mailbox)
+            }
         }
     }
 
@@ -158,45 +238,39 @@ final class MailManager: ObservableObject {
 
     // MARK: - Delete messages
 
-    func deleteSelectedMessages() async {
-        guard !selectedMessages.isEmpty else { return }
+    /// Optimistic delete: removes the messages from the UI immediately, then
+    /// deletes them in Mail in the background. On failure it reloads to resync
+    /// with Mail's real state (the actual deletion may be slow over IMAP).
+    private func optimisticDelete(_ messages: [MailMessage], noun: String) async {
+        guard !messages.isEmpty else { return }
 
-        let toDelete = allMessages.filter { selectedMessages.contains($0.id) }
-
-        isLoading = true
-        statusMessage = "Eliminando \(toDelete.count) correos..."
+        let removedIds = Set(messages.map(\.id))
+        allMessages.removeAll { removedIds.contains($0.id) }
+        selectedMessages.subtract(removedIds)
+        buildSenderGroups()
+        applyFilters()
+        findDuplicates()
+        cache.update(allMessages, account: currentAccount, mailbox: currentMailbox)
+        statusMessage = "Eliminando \(messages.count) \(noun) en segundo plano..."
 
         do {
-            let count = try await bridgeDelete(toDelete)
-            statusMessage = "\(count) correos eliminados"
-            allMessages.removeAll { selectedMessages.contains($0.id) }
-            selectedMessages.removeAll()
-            buildSenderGroups()
-            applyFilters()
+            let count = try await bridgeDelete(messages)
+            statusMessage = "\(count) \(noun) eliminados"
         } catch {
             errorMessage = error.localizedDescription
-            statusMessage = "Error al eliminar"
+            statusMessage = "Error al eliminar — recargando..."
+            await loadMessages()
         }
+    }
 
-        isLoading = false
+    func deleteSelectedMessages() async {
+        guard !selectedMessages.isEmpty else { return }
+        let toDelete = allMessages.filter { selectedMessages.contains($0.id) }
+        await optimisticDelete(toDelete, noun: "correos")
     }
 
     func deleteMessagesFromSender(_ sender: SenderGroup) async {
-        isLoading = true
-        statusMessage = "Eliminando \(sender.messages.count) correos de \(sender.displayName)..."
-
-        do {
-            let count = try await bridgeDelete(sender.messages)
-            statusMessage = "\(count) correos eliminados"
-            let idsToRemove = Set(sender.messages.map(\.id))
-            allMessages.removeAll { idsToRemove.contains($0.id) }
-            buildSenderGroups()
-            applyFilters()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-
-        isLoading = false
+        await optimisticDelete(sender.messages, noun: "correos")
     }
 
     // MARK: - Move messages
@@ -216,6 +290,7 @@ final class MailManager: ObservableObject {
             selectedMessages.removeAll()
             buildSenderGroups()
             applyFilters()
+            cache.update(allMessages, account: currentAccount, mailbox: currentMailbox)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -234,6 +309,7 @@ final class MailManager: ObservableObject {
             allMessages.removeAll { idsToRemove.contains($0.id) }
             buildSenderGroups()
             applyFilters()
+            cache.update(allMessages, account: currentAccount, mailbox: currentMailbox)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -259,26 +335,7 @@ final class MailManager: ObservableObject {
     /// account + mailbox, since duplicates can live in different mailboxes.
     func deleteDuplicateExtras(_ group: DuplicateGroup) async {
         let toDelete = Array(group.messages.dropFirst())
-        guard !toDelete.isEmpty else { return }
-
-        isLoading = true
-        statusMessage = "Eliminando \(toDelete.count) duplicados..."
-
-        do {
-            let deletedTotal = try await bridgeDelete(toDelete)
-
-            let idsToRemove = Set(toDelete.map(\.id))
-            allMessages.removeAll { idsToRemove.contains($0.id) }
-            buildSenderGroups()
-            applyFilters()
-            findDuplicates()
-            statusMessage = "\(deletedTotal) duplicados eliminados"
-        } catch {
-            errorMessage = error.localizedDescription
-            statusMessage = "Error al eliminar duplicados"
-        }
-
-        isLoading = false
+        await optimisticDelete(toDelete, noun: "duplicados")
     }
 
     // MARK: - Selection
@@ -356,6 +413,9 @@ final class MailManager: ObservableObject {
                 $0.senderDomain.lowercased().contains(query)
             }
         }
+
+        // Newest first.
+        filteredMessages.sort { $0.dateReceived > $1.dateReceived }
     }
 
     func selectSender(_ sender: SenderGroup?) {

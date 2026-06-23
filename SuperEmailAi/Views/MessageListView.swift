@@ -19,6 +19,7 @@ struct MessageListView: View {
     }
 
     var body: some View {
+        HSplitView {
         VStack(spacing: 0) {
             // Header with sender info and actions
             if let sender = manager.selectedSender {
@@ -147,9 +148,76 @@ struct MessageListView: View {
                 }
             }
         }
+        .frame(minWidth: 380)
+
+        MessageDetailPane()
+            .frame(minWidth: 320, idealWidth: 440)
+        }
         .sheet(isPresented: $showDeleteConfirmation) {
             DeleteConfirmationView(messages: messagesToDelete) {
                 Task { await manager.deleteSelectedMessages() }
+            }
+        }
+        .onChange(of: manager.selectedMessages) { _, newValue in
+            if newValue.count == 1, let id = newValue.first,
+               let msg = manager.filteredMessages.first(where: { $0.id == id }) {
+                Task { await manager.openMessage(msg) }
+            }
+        }
+    }
+}
+
+// MARK: - Message Detail (reading pane)
+
+struct MessageDetailPane: View {
+    @EnvironmentObject var manager: MailManager
+
+    var body: some View {
+        if manager.selectedMessages.count == 1, let msg = manager.openedMessage {
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(msg.subject)
+                        .font(.title3.bold())
+                        .textSelection(.enabled)
+                    HStack(spacing: 6) {
+                        Text(msg.sender)
+                            .font(.subheadline.weight(.medium))
+                        Text("<\(msg.senderAddress)>")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(msg.dateReceived.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+
+                Divider()
+
+                if manager.isLoadingBody {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        Text(manager.openedBody)
+                            .font(.body)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(12)
+                    }
+                }
+            }
+        } else {
+            ContentUnavailableView {
+                Label(
+                    manager.selectedMessages.count > 1 ? "\(manager.selectedMessages.count) seleccionados" : "Sin correo abierto",
+                    systemImage: "envelope.open"
+                )
+            } description: {
+                Text(manager.selectedMessages.count > 1
+                     ? "Modo selección múltiple para acciones en bloque."
+                     : "Selecciona un correo para leerlo.")
             }
         }
     }

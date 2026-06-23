@@ -2,22 +2,21 @@ import Foundation
 
 /// Bridge to interact with Mail.app via AppleScript.
 ///
-/// Results are read structurally from the returned `NSAppleEventDescriptor`
-/// (a list of records) instead of parsing the coerced string output. This is
-/// robust against subjects/senders that contain characters like `}, {` or
-/// commas, which broke the previous string-splitting approach.
+/// Messages are read with a per-message `try` so one bad message (missing
+/// property) doesn't drop the whole mailbox. Results are read structurally from
+/// the returned `NSAppleEventDescriptor`. Each message carries its real owning
+/// account (7th field) so delete/move can target the right mailbox.
 final class MailBridge {
 
     static let shared = MailBridge()
     private init() {}
 
+    // AppleScript list descriptor type ('list').
+    private static let listType: DescType = 0x6C697374
+
     // MARK: - Fetch all messages from a mailbox
 
     func fetchMessages(from mailbox: String = "INBOX", account: String? = nil, limit: Int = 500) async throws -> [MailMessage] {
-        // A bare `mailbox "X"` only resolves local ("On My Mac") mailboxes, so
-        // account mailboxes must be qualified `of account`. When no account is
-        // given we iterate every account and tag each message with its real
-        // account name (7th field) so delete/move can target it correctly.
         let script: String
         if let account = account {
             script = """
@@ -121,7 +120,6 @@ final class MailBridge {
 
         // Resolve each target by id with a `whose` filter (evaluated inside Mail)
         // instead of marshalling every message in the mailbox across Apple Events.
-        // Cost is proportional to the number deleted, not the mailbox size.
         let script = """
         tell application "Mail"
             set deletedCount to 0
@@ -213,10 +211,24 @@ final class MailBridge {
         return parseMessages(from: descriptor, mailbox: mailbox)
     }
 
+    // MARK: - Fetch a single message's body
+
+    func fetchMessageContent(id: Int, mailbox: String, account: String? = nil) async throws -> String {
+        let accountFilter = account.map { "of account \"\($0)\"" } ?? ""
+        let script = """
+        tell application "Mail"
+            set theMessage to (first message of mailbox "\(mailbox)" \(accountFilter) whose id is \(id))
+            return content of theMessage
+        end tell
+        """
+
+        let descriptor = try await runAppleScript(script)
+        return descriptor.stringValue ?? ""
+    }
+
     // MARK: - AppleScript execution
 
-    /// Runs the script and returns the raw `NSAppleEventDescriptor` result so
-    /// callers can read list/record structure directly.
+    /// Runs the script and returns the raw `NSAppleEventDescriptor` result.
     private func runAppleScript(_ source: String) async throws -> NSAppleEventDescriptor {
         return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
@@ -240,16 +252,24 @@ final class MailBridge {
 
     // MARK: - Structured parsing (NSAppleEventDescriptor)
 
+    /// Returns the elements of a list descriptor, or `[descriptor]` for a scalar,
+    /// or `[]` for an empty list.
+    private func listItems(_ descriptor: NSAppleEventDescriptor?) -> [NSAppleEventDescriptor] {
+        guard let descriptor = descriptor else { return [] }
+        if descriptor.descriptorType == Self.listType {
+            let n = descriptor.numberOfItems
+            guard n > 0 else { return [] }
+            return (1...n).compactMap { descriptor.atIndex($0) }
+        }
+        return [descriptor]
+    }
+
     /// Parses a list of message records: `{subject, sender, dateSent, dateReceived, read, id, accountName}`.
-    /// AppleScript list/record indices are 1-based. The account name (7th field)
-    /// is the real owning account so delete/move can target the right mailbox.
     private func parseMessages(from descriptor: NSAppleEventDescriptor, mailbox: String) -> [MailMessage] {
         var messages: [MailMessage] = []
-        let count = descriptor.numberOfItems
-        guard count > 0 else { return messages }
 
-        for i in 1...count {
-            guard let record = descriptor.atIndex(i), record.numberOfItems >= 6 else { continue }
+        for record in listItems(descriptor) {
+            guard record.numberOfItems >= 6 else { continue }
 
             let subject = record.atIndex(1)?.stringValue ?? "(sin asunto)"
             let senderRaw = record.atIndex(2)?.stringValue ?? ""
@@ -282,26 +302,15 @@ final class MailBridge {
     /// Parses a list of account records: `{accountName, {mailboxName, ...}}`.
     private func parseAccounts(from descriptor: NSAppleEventDescriptor) -> [(name: String, mailboxes: [String])] {
         var accounts: [(name: String, mailboxes: [String])] = []
-        let count = descriptor.numberOfItems
-        guard count > 0 else { return accounts }
 
-        for i in 1...count {
-            guard let entry = descriptor.atIndex(i), entry.numberOfItems >= 2 else { continue }
-
+        for entry in listItems(descriptor) {
+            guard entry.numberOfItems >= 2 else { continue }
             let name = entry.atIndex(1)?.stringValue ?? ""
             guard !name.isEmpty else { continue }
 
-            var mailboxes: [String] = []
-            if let mbList = entry.atIndex(2) {
-                let mbCount = mbList.numberOfItems
-                if mbCount > 0 {
-                    for j in 1...mbCount {
-                        if let mb = mbList.atIndex(j)?.stringValue, !mb.isEmpty {
-                            mailboxes.append(mb)
-                        }
-                    }
-                }
-            }
+            let mailboxes = listItems(entry.atIndex(2))
+                .compactMap { $0.stringValue }
+                .filter { !$0.isEmpty }
 
             accounts.append((name: name, mailboxes: mailboxes))
         }
@@ -311,17 +320,9 @@ final class MailBridge {
 
     /// Parses a flat AppleScript list of strings.
     private func parseStringList(from descriptor: NSAppleEventDescriptor) -> [String] {
-        var items: [String] = []
-        let count = descriptor.numberOfItems
-        guard count > 0 else { return items }
-
-        for i in 1...count {
-            if let value = descriptor.atIndex(i)?.stringValue, !value.isEmpty {
-                items.append(value)
-            }
-        }
-
-        return items
+        return listItems(descriptor)
+            .compactMap { $0.stringValue }
+            .filter { !$0.isEmpty }
     }
 
     // MARK: - Sender parsing helpers
@@ -332,7 +333,6 @@ final class MailBridge {
            start < end {
             return String(sender[sender.index(after: start)..<end]).lowercased()
         }
-        // Already just an email
         if sender.contains("@") {
             return sender.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         }

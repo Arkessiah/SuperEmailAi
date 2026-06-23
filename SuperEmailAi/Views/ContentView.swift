@@ -72,8 +72,10 @@ struct ContentView: View {
             StatusBar()
         }
         .task {
+            manager.showCachedInstantly()
             await manager.loadAccounts()
             await manager.loadMessages()
+            await manager.prefetchAllMailboxes()
         }
     }
 }

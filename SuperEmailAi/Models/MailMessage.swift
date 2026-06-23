@@ -1,6 +1,6 @@
 import Foundation
 
-struct MailMessage: Identifiable, Hashable {
+struct MailMessage: Identifiable, Hashable, Codable {
     let id: String
     let subject: String
     let sender: String
@@ -46,7 +46,7 @@ struct DuplicateGroup: Identifiable {
     var count: Int { messages.count }
 }
 
-struct MailAccount: Identifiable, Hashable {
+struct MailAccount: Identifiable, Hashable, Codable {
     let id: String        // account name (unique in Mail.app)
     let name: String
     let mailboxes: [String]
