@@ -31,6 +31,7 @@ final class MailManager: ObservableObject {
     @Published var isReadingOpen = false
     @Published var openedMessage: MailMessage?
     @Published var openedBody: String = ""
+    @Published var openedHTML: String?
     @Published var isLoadingBody = false
 
     /// App mode: a standard reader (Spark-like) vs the sender-grouping cleanup tool.
@@ -122,18 +123,22 @@ final class MailManager: ObservableObject {
         openedMessage = nil
     }
 
-    /// Loads the body of a message into the reading pane.
+    /// Loads the body of a message into the reading pane (HTML if available,
+    /// otherwise plain text).
     func openMessage(_ message: MailMessage) async {
         openedMessage = message
         openedBody = ""
+        openedHTML = nil
         isLoadingBody = true
         do {
             let account = message.account.isEmpty ? nil : message.account
-            openedBody = try await bridge.fetchMessageContent(
+            let raw = try await bridge.fetchMessageRaw(
                 id: message.messageId,
                 mailbox: message.mailbox,
                 account: account
             )
+            openedBody = raw.content
+            openedHTML = MIMEParser.htmlBody(fromSource: raw.source)
         } catch {
             openedBody = "(No se pudo cargar el contenido: \(error.localizedDescription))"
         }
@@ -193,6 +198,7 @@ final class MailManager: ObservableObject {
 
     /// Selects an account (nil = all accounts), refreshes its mailboxes and reloads.
     func selectAccount(_ account: String?) async {
+        closeReading()
         currentAccount = account
         rebuildMailboxList()
         await loadMessages()
@@ -200,12 +206,14 @@ final class MailManager: ObservableObject {
 
     /// Selects a mailbox and reloads its messages.
     func selectMailbox(_ mailbox: String) async {
+        closeReading()
         currentMailbox = mailbox
         await loadMessages()
     }
 
     /// Opens a specific account+mailbox (used by the reader's folder sidebar).
     func openMailbox(account: String?, mailbox: String) async {
+        closeReading()
         currentAccount = account
         currentMailbox = mailbox
         selectedSender = nil
@@ -449,6 +457,7 @@ final class MailManager: ObservableObject {
     }
 
     func selectSender(_ sender: SenderGroup?) {
+        closeReading()
         selectedSender = sender
         selectedMessages.removeAll()
         applyFilters()

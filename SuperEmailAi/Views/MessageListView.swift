@@ -314,6 +314,9 @@ struct MessageDetailPane: View {
                 if manager.isLoadingBody {
                     ProgressView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let html = manager.openedHTML {
+                    HTMLView(html: html)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ScrollView {
                         Text(manager.openedBody)

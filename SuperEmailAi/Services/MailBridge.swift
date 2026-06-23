@@ -211,19 +211,22 @@ final class MailBridge {
         return parseMessages(from: descriptor, mailbox: mailbox)
     }
 
-    // MARK: - Fetch a single message's body
+    // MARK: - Fetch a single message's body (plain text + raw source for HTML)
 
-    func fetchMessageContent(id: Int, mailbox: String, account: String? = nil) async throws -> String {
+    func fetchMessageRaw(id: Int, mailbox: String, account: String? = nil) async throws -> (content: String, source: String) {
         let accountFilter = account.map { "of account \"\($0)\"" } ?? ""
         let script = """
         tell application "Mail"
             set theMessage to (first message of mailbox "\(mailbox)" \(accountFilter) whose id is \(id))
-            return content of theMessage
+            return {content of theMessage, source of theMessage}
         end tell
         """
 
         let descriptor = try await runAppleScript(script)
-        return descriptor.stringValue ?? ""
+        let items = listItems(descriptor)
+        let content = items.count > 0 ? (items[0].stringValue ?? "") : ""
+        let source = items.count > 1 ? (items[1].stringValue ?? "") : ""
+        return (content: content, source: source)
     }
 
     // MARK: - AppleScript execution

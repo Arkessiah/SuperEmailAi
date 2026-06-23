@@ -5,6 +5,9 @@ struct ContentView: View {
     @State private var showDuplicates = false
     @State private var showMoveSheet = false
     @State private var moveTarget: MoveTarget?
+    @AppStorage("appAppearance") private var appearanceRaw = AppAppearance.system.rawValue
+
+    private var appearance: AppAppearance { AppAppearance(rawValue: appearanceRaw) ?? .system }
 
     enum MoveTarget {
         case selected
@@ -41,6 +44,19 @@ struct ContentView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 220)
+            }
+            ToolbarItem(placement: .automatic) {
+                Menu {
+                    Picker("Apariencia", selection: $appearanceRaw) {
+                        ForEach(AppAppearance.allCases) { a in
+                            Label(a.label, systemImage: a.icon).tag(a.rawValue)
+                        }
+                    }
+                    .pickerStyle(.inline)
+                } label: {
+                    Image(systemName: appearance.icon)
+                }
+                .help("Apariencia: claro / oscuro / sistema")
             }
             ToolbarItem(placement: .automatic) {
                 HStack(spacing: 12) {
@@ -96,6 +112,7 @@ struct ContentView: View {
         .onChange(of: manager.mode) {
             showDuplicates = false
         }
+        .preferredColorScheme(appearance.colorScheme)
     }
 }
 
