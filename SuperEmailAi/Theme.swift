@@ -61,6 +61,33 @@ extension Color {
     /// Hairline borders.
     static let appBorder = dynamic(
         light: NSColor(calibratedWhite: 0.90, alpha: 1),
+        dark: NSColor(calibratedWhite: 0.24, alpha: 1)
+    )
+
+    /// Active row pill (neutral, FlowAI-style — not a strong accent).
+    static let appActive = dynamic(
+        light: NSColor(calibratedWhite: 0.88, alpha: 1),
         dark: NSColor(calibratedWhite: 0.26, alpha: 1)
     )
+
+    /// Subtle filled control background (search field, chips).
+    static let appControl = dynamic(
+        light: NSColor(calibratedWhite: 0.92, alpha: 1),
+        dark: NSColor(calibratedWhite: 0.20, alpha: 1)
+    )
+}
+
+// MARK: - Card surface modifier
+
+extension View {
+    /// Wraps the view in a rounded card (FlowAI-style surface + hairline border).
+    func cardStyle(cornerRadius: CGFloat = 12) -> some View {
+        self
+            .background(Color.appCard)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(Color.appBorder, lineWidth: 1)
+            )
+    }
 }

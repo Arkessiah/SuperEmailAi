@@ -102,7 +102,9 @@ struct SidebarView: View {
                     }
             }
             .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
         }
+        .background(Color.appSidebar)
         .frame(minWidth: 280)
     }
 }

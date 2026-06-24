@@ -5,7 +5,7 @@ struct ContentView: View {
     @State private var showDuplicates = false
     @State private var showMoveSheet = false
     @State private var moveTarget: MoveTarget?
-    @AppStorage("appAppearance") private var appearanceRaw = AppAppearance.system.rawValue
+    @AppStorage("appAppearance") private var appearanceRaw = AppAppearance.dark.rawValue
 
     private var appearance: AppAppearance { AppAppearance(rawValue: appearanceRaw) ?? .system }
 
@@ -44,6 +44,27 @@ struct ContentView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 220)
+            }
+            ToolbarItem(placement: .automatic) {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField("Buscar…", text: $manager.searchText)
+                        .textFieldStyle(.plain)
+                        .frame(width: 150)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.appControl, in: Capsule())
+            }
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    // Placeholder for the future on-device AI assistant.
+                } label: {
+                    Label("Ask AI", systemImage: "sparkles")
+                }
+                .help("Asistente IA local (próximamente)")
             }
             ToolbarItem(placement: .automatic) {
                 Menu {

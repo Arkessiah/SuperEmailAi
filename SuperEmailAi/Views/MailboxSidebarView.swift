@@ -31,6 +31,8 @@ struct MailboxSidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
+        .background(Color.appSidebar)
         .frame(minWidth: 240)
         .onAppear {
             guard !didInit else { return }
@@ -68,16 +70,24 @@ struct MailboxSidebarView: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: icon(for: mailbox))
-                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                    .foregroundStyle(isSelected ? .primary : .secondary)
                     .frame(width: 18)
                 Text(displayName(mailbox))
+                    .font(.system(.body, weight: isSelected ? .medium : .regular))
                     .lineLimit(1)
                 Spacer()
             }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                isSelected ? Color.appActive : Color.clear,
+                in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .listRowBackground(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
+        .listRowBackground(Color.clear)
+        .listRowInsets(EdgeInsets(top: 1, leading: 6, bottom: 1, trailing: 6))
     }
 
     /// Orders a single account's mailboxes the way Mail/Spark do: INBOX first,

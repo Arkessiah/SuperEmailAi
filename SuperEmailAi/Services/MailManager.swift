@@ -19,6 +19,7 @@ final class MailManager: ObservableObject {
 
     @Published var isLoading = false
     @Published var isRefreshing = false
+    @Published var loadProgress: Double?     // 0...1 during a first (no-cache) load
     @Published var statusMessage = "Listo"
     @Published var errorMessage: String?
 
@@ -72,7 +73,8 @@ final class MailManager: ObservableObject {
     }
 
     /// Cache-first load: shows cached messages instantly (if any), then refreshes
-    /// from Mail.app in the background and updates both the UI and the cache.
+    /// from Mail.app. When there is no cache it shows a progress overlay and
+    /// streams messages account-by-account so they appear as they arrive.
     func loadMessages(limit: Int = 1000) async {
         errorMessage = nil
 
@@ -84,29 +86,52 @@ final class MailManager: ObservableObject {
             statusMessage = "\(cached.count) en caché · actualizando…"
             isRefreshing = true
             isLoading = false
+            await refresh(limit: limit, withProgress: false)
         } else {
             isLoading = true
-            statusMessage = "Cargando correos de \(currentMailbox)…"
-        }
-
-        do {
-            let fresh = try await bridge.fetchMessages(
-                from: currentMailbox,
-                account: currentAccount,
-                limit: limit
-            )
-            allMessages = fresh
-            buildSenderGroups()
-            applyFilters()
-            cache.update(fresh, account: currentAccount, mailbox: currentMailbox)
-            statusMessage = "\(fresh.count) correos"
-        } catch {
-            errorMessage = error.localizedDescription
-            if allMessages.isEmpty { statusMessage = "Error al cargar" }
+            loadProgress = 0
+            statusMessage = "Cargando correos…"
+            await refresh(limit: limit, withProgress: true)
         }
 
         isLoading = false
         isRefreshing = false
+        loadProgress = nil
+    }
+
+    /// Fetches the current view. For "all accounts" it streams account-by-account
+    /// so messages appear progressively and `loadProgress` reflects real progress.
+    private func refresh(limit: Int, withProgress: Bool) async {
+        if let account = currentAccount {
+            if let fresh = try? await bridge.fetchMessages(from: currentMailbox, account: account, limit: limit) {
+                allMessages = fresh
+                buildSenderGroups()
+                applyFilters()
+                cache.update(fresh, account: account, mailbox: currentMailbox)
+                statusMessage = "\(fresh.count) correos"
+            } else if allMessages.isEmpty {
+                statusMessage = "Error al cargar"
+            }
+            if withProgress { loadProgress = 1 }
+            return
+        }
+
+        let targets = accounts
+        guard !targets.isEmpty else { return }
+        let perAccount = 120
+        var collected: [MailMessage] = []
+        for (index, account) in targets.enumerated() {
+            if let fresh = try? await bridge.fetchMessages(from: currentMailbox, account: account.name, limit: perAccount) {
+                collected.append(contentsOf: fresh)
+                allMessages = collected
+                buildSenderGroups()
+                applyFilters()
+            }
+            if withProgress { loadProgress = Double(index + 1) / Double(targets.count) }
+            statusMessage = "Cargando… \(collected.count) correos"
+        }
+        cache.update(collected, account: nil, mailbox: currentMailbox)
+        statusMessage = "\(collected.count) correos"
     }
 
     // MARK: - Reading a message

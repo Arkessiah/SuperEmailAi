@@ -25,7 +25,10 @@ struct MessageListView: View {
                     listColumn
                         .frame(minWidth: 380)
                     MessageDetailPane()
+                        .cardStyle()
+                        .padding(8)
                         .frame(minWidth: 340, idealWidth: 460)
+                        .background(Color.appBackground)
                 }
             } else {
                 listColumn
@@ -36,6 +39,30 @@ struct MessageListView: View {
                 Task { await manager.deleteSelectedMessages() }
             }
         }
+    }
+
+    // MARK: - Loading overlay
+
+    private var loadingView: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .controlSize(.large)
+            Text("Cargando correos…")
+                .font(.headline)
+            if let progress = manager.loadProgress {
+                ProgressView(value: progress)
+                    .progressViewStyle(.linear)
+                    .frame(width: 240)
+                Text("\(Int(progress * 100))%")
+                    .font(.title3.monospacedDigit().weight(.semibold))
+                    .contentTransition(.numericText())
+            }
+            Text(manager.statusMessage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(.easeInOut, value: manager.loadProgress)
     }
 
     // MARK: - List column
@@ -88,7 +115,9 @@ struct MessageListView: View {
 
             Divider()
 
-            if displayedMessages.isEmpty {
+            if manager.isLoading && manager.allMessages.isEmpty {
+                loadingView
+            } else if displayedMessages.isEmpty {
                 ContentUnavailableView {
                     Label(
                         manager.allMessages.isEmpty ? "Sin correos" : "Sin resultados",
@@ -136,8 +165,10 @@ struct MessageListView: View {
                     }
                 }
                 .listStyle(.inset)
+                .scrollContentBackground(.hidden)
             }
         }
+        .background(Color.appBackground)
     }
 }
 
