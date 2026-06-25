@@ -447,6 +447,37 @@ final class MailManager: ObservableObject {
         await optimisticDelete(toDelete, noun: "duplicados")
     }
 
+    // MARK: - Triage actions (keyboard)
+
+    /// Toggles read state for the current selection (if any is unread → mark all
+    /// read; else mark all unread).
+    func toggleReadForSelection() async {
+        let selected = allMessages.filter { selectedMessages.contains($0.id) }
+        guard !selected.isEmpty else { return }
+        let markRead = selected.contains { !$0.isRead }
+
+        let separator = "\u{0001}"
+        let groups = Dictionary(grouping: selected) { "\($0.account)\(separator)\($0.mailbox)" }
+        for (key, msgs) in groups {
+            let parts = key.components(separatedBy: separator)
+            let account = parts.first.flatMap { $0.isEmpty ? nil : $0 }
+            let mailbox = parts.count > 1 ? parts[1] : currentMailbox
+            _ = try? await bridge.setReadStatus(ids: msgs.map(\.messageId), read: markRead, mailbox: mailbox, account: account)
+        }
+
+        let ids = Set(selected.map(\.id))
+        allMessages = allMessages.map { ids.contains($0.id) ? $0.with(isRead: markRead) : $0 }
+        buildSenderGroups()
+        applyFilters()
+        cache.update(allMessages, account: currentAccount, mailbox: currentMailbox)
+        statusMessage = markRead ? "Marcados como leídos" : "Marcados como no leídos"
+    }
+
+    /// Archives the current selection (moves to the "Archive" mailbox).
+    func archiveSelection() async {
+        await moveSelectedMessages(to: "Archive")
+    }
+
     // MARK: - Bulk cleanup ("Llévame a cero")
 
     struct CleanupCriteria {

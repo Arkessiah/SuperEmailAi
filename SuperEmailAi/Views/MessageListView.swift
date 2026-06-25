@@ -129,6 +129,7 @@ struct MessageListView: View {
                          : "Prueba con otro termino de busqueda")
                 }
             } else {
+                ScrollViewReader { proxy in
                 List(selection: $manager.selectedMessages) {
                     ForEach(displayedMessages) { msg in
                         MessageRow(message: msg)
@@ -193,9 +194,27 @@ struct MessageListView: View {
                     }
                     return .ignored
                 }
+                .onKeyPress("j") { moveSelection(by: 1, proxy: proxy); return .handled }
+                .onKeyPress("k") { moveSelection(by: -1, proxy: proxy); return .handled }
+                .onKeyPress("e") { Task { await manager.archiveSelection() }; return .handled }
+                .onKeyPress("u") { Task { await manager.toggleReadForSelection() }; return .handled }
+                }
             }
         }
         .background(Color.appBackground)
+    }
+
+    /// Moves the single selection up/down and scrolls to keep it visible (J/K).
+    private func moveSelection(by delta: Int, proxy: ScrollViewProxy) {
+        let list = displayedMessages
+        guard !list.isEmpty else { return }
+        let current = manager.selectedMessages.first.flatMap { id in
+            list.firstIndex { $0.id == id }
+        } ?? (delta > 0 ? -1 : list.count)
+        let next = max(0, min(list.count - 1, current + delta))
+        let id = list[next].id
+        manager.selectedMessages = [id]
+        proxy.scrollTo(id, anchor: .center)
     }
 }
 

@@ -24,6 +24,15 @@ struct MailMessage: Identifiable, Hashable, Codable {
     static func == (lhs: MailMessage, rhs: MailMessage) -> Bool {
         lhs.id == rhs.id
     }
+
+    /// Returns a copy with a different read state (struct has `let` fields).
+    func with(isRead newValue: Bool) -> MailMessage {
+        MailMessage(
+            id: id, subject: subject, sender: sender, senderAddress: senderAddress,
+            dateSent: dateSent, dateReceived: dateReceived, isRead: newValue,
+            mailbox: mailbox, account: account, messageId: messageId
+        )
+    }
 }
 
 struct SenderGroup: Identifiable {

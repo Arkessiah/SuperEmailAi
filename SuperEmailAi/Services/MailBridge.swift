@@ -204,6 +204,31 @@ final class MailBridge {
         return Int(descriptor.int32Value)
     }
 
+    // MARK: - Set read status by IDs
+
+    func setReadStatus(ids: [Int], read: Bool, mailbox: String, account: String? = nil) async throws -> Int {
+        guard !ids.isEmpty else { return 0 }
+        let accountFilter = account.map { "of account \"\($0)\"" } ?? ""
+        let idList = ids.map(String.init).joined(separator: ", ")
+
+        let script = """
+        tell application "Mail"
+            set changed to 0
+            set theMailbox to mailbox "\(mailbox)" \(accountFilter)
+            repeat with theId in {\(idList)}
+                try
+                    set read status of (first message of theMailbox whose id is (theId as integer)) to \(read)
+                    set changed to changed + 1
+                end try
+            end repeat
+            return changed
+        end tell
+        """
+
+        let descriptor = try await runAppleScript(script)
+        return Int(descriptor.int32Value)
+    }
+
     // MARK: - Move messages to a mailbox
 
     func moveMessages(ids: [Int], fromMailbox: String, toMailbox: String, account: String? = nil) async throws -> Int {
