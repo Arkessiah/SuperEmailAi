@@ -183,6 +183,12 @@ struct MessageListView: View {
                 }
                 .listStyle(.inset)
                 .scrollContentBackground(.hidden)
+                .onDeleteCommand {
+                    if !manager.selectedMessages.isEmpty {
+                        messagesToDelete = manager.allMessages.filter { manager.selectedMessages.contains($0.id) }
+                        showDeleteConfirmation = true
+                    }
+                }
             }
         }
         .background(Color.appBackground)

@@ -4,6 +4,7 @@ struct ContentView: View {
     @EnvironmentObject var manager: MailManager
     @State private var showDuplicates = false
     @State private var showMoveSheet = false
+    @State private var showCleanup = false
     @State private var moveTarget: MoveTarget?
     @AppStorage("appAppearance") private var appearanceRaw = AppAppearance.dark.rawValue
 
@@ -44,6 +45,16 @@ struct ContentView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 220)
+            }
+            ToolbarItem(placement: .automatic) {
+                if manager.mode == .limpieza {
+                    Button {
+                        showCleanup = true
+                    } label: {
+                        Label("Llévame a cero", systemImage: "trash.slash")
+                    }
+                    .help("Vaciar el buzón por criterios (con conteo previo)")
+                }
             }
             ToolbarItem(placement: .automatic) {
                 HStack(spacing: 6) {
@@ -120,6 +131,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showMoveSheet) {
             FolderPickerSheet(moveTarget: $moveTarget)
+        }
+        .sheet(isPresented: $showCleanup) {
+            CleanupSheet()
         }
         .overlay(alignment: .bottom) {
             StatusBar()

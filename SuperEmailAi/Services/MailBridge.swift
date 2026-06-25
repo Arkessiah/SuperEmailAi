@@ -141,6 +141,42 @@ final class MailBridge {
         return parseStringList(from: descriptor)
     }
 
+    // MARK: - Bulk cleanup by predicate (acts on the whole mailbox in Mail)
+
+    /// Counts messages in a mailbox matching an AppleScript `whose` predicate
+    /// (e.g. `read status is true and date received < ((current date) - (30 * days))`).
+    /// Empty predicate counts everything.
+    func bulkCount(mailbox: String, account: String, predicate: String) async throws -> Int {
+        let whoseClause = predicate.isEmpty ? "" : "whose \(predicate)"
+        let script = """
+        tell application "Mail"
+            try
+                return count of (messages of mailbox "\(mailbox)" of account "\(account)" \(whoseClause))
+            on error
+                return -1
+            end try
+        end tell
+        """
+        let descriptor = try await runAppleScript(script)
+        return Int(descriptor.int32Value)
+    }
+
+    /// Deletes (moves to Trash) all messages matching the predicate. Returns how
+    /// many were deleted.
+    func bulkDelete(mailbox: String, account: String, predicate: String) async throws -> Int {
+        let whoseClause = predicate.isEmpty ? "" : "whose \(predicate)"
+        let script = """
+        tell application "Mail"
+            set theMatches to (messages of mailbox "\(mailbox)" of account "\(account)" \(whoseClause))
+            set n to (count of theMatches)
+            delete theMatches
+            return n
+        end tell
+        """
+        let descriptor = try await runAppleScript(script)
+        return Int(descriptor.int32Value)
+    }
+
     // MARK: - Delete messages by IDs
 
     func deleteMessages(ids: [Int], mailbox: String, account: String? = nil) async throws -> Int {

@@ -447,6 +447,72 @@ final class MailManager: ObservableObject {
         await optimisticDelete(toDelete, noun: "duplicados")
     }
 
+    // MARK: - Bulk cleanup ("Llévame a cero")
+
+    struct CleanupCriteria {
+        var senderContains: String = ""   // sender / domain / brand match
+        var olderThanDays: Int? = nil
+        var keepUnread = true
+        var keepFlagged = true
+    }
+
+    private func predicate(for c: CleanupCriteria) -> String {
+        var parts: [String] = []
+        let sender = c.senderContains.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !sender.isEmpty {
+            parts.append("sender contains \"\(escapeForAppleScript(sender))\"")
+        }
+        if let days = c.olderThanDays {
+            parts.append("date received < ((current date) - (\(days) * days))")
+        }
+        if c.keepUnread { parts.append("read status is true") }
+        if c.keepFlagged { parts.append("flagged status is false") }
+        return parts.joined(separator: " and ")
+    }
+
+    private func escapeForAppleScript(_ s: String) -> String {
+        s.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
+    private func cleanupAccountNames() -> [String] {
+        currentAccount.map { [$0] } ?? accounts.map(\.name)
+    }
+
+    /// Counts how many messages the cleanup would move to Trash from the current
+    /// mailbox (across the current account, or all accounts when none selected).
+    func cleanupCount(_ criteria: CleanupCriteria) async -> Int {
+        let pred = predicate(for: criteria)
+        var total = 0
+        for account in cleanupAccountNames() {
+            if let n = try? await bridge.bulkCount(mailbox: currentMailbox, account: account, predicate: pred), n > 0 {
+                total += n
+            }
+        }
+        return total
+    }
+
+    /// Executes the cleanup (moves matching messages to Trash) and reloads.
+    func performCleanup(_ criteria: CleanupCriteria) async {
+        let pred = predicate(for: criteria)
+        isLoading = true
+        statusMessage = "Vaciando…"
+
+        var total = 0
+        for account in cleanupAccountNames() {
+            if let n = try? await bridge.bulkDelete(mailbox: currentMailbox, account: account, predicate: pred) {
+                total += n
+            }
+        }
+
+        allMessages = []
+        buildSenderGroups()
+        applyFilters()
+        await refresh(limit: 1000, withProgress: false)
+        statusMessage = "\(total) correos movidos a la Papelera"
+        isLoading = false
+    }
+
     // MARK: - Selection
 
     func selectAll() {
