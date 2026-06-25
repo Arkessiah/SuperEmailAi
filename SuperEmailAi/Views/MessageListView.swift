@@ -133,6 +133,11 @@ struct MessageListView: View {
                     ForEach(displayedMessages) { msg in
                         MessageRow(message: msg)
                             .tag(msg.id)
+                            .onAppear {
+                                if searchText.isEmpty, msg.id == displayedMessages.last?.id {
+                                    Task { await manager.loadMoreMessages() }
+                                }
+                            }
                             .contentShape(Rectangle())
                             .simultaneousGesture(TapGesture(count: 2).onEnded {
                                 Task { await manager.openForReading(msg) }
@@ -162,6 +167,18 @@ struct MessageListView: View {
                                     Label("Mover \(targets.count)…", systemImage: "folder")
                                 }
                             }
+                    }
+
+                    if manager.isLoadingMore {
+                        HStack {
+                            Spacer()
+                            ProgressView().controlSize(.small)
+                            Text("Cargando más…")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                        .listRowSeparator(.hidden)
                     }
                 }
                 .listStyle(.inset)

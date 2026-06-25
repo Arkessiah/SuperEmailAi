@@ -70,6 +70,36 @@ final class MailBridge {
         return parseMessages(from: descriptor, mailbox: mailbox)
     }
 
+    /// Fetches a range of messages (for pagination): items `offset+1 ... offset+limit`
+    /// of one account's mailbox. Returns `[]` when the offset is past the end.
+    func fetchMessagesRange(mailbox: String, account: String, offset: Int, limit: Int) async throws -> [MailMessage] {
+        let script = """
+        tell application "Mail"
+            set msgList to {}
+            try
+                set theMailbox to mailbox "\(mailbox)" of account "\(account)"
+                set total to count of (messages of theMailbox)
+                set startI to \(offset + 1)
+                set endI to \(offset + limit)
+                if endI > total then set endI to total
+                if startI > endI then
+                    return {}
+                end if
+                set theMessages to messages startI thru endI of theMailbox
+                repeat with msg in theMessages
+                    try
+                        set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, "\(account)"}
+                    end try
+                end repeat
+            end try
+            return msgList
+        end tell
+        """
+
+        let descriptor = try await runAppleScript(script)
+        return parseMessages(from: descriptor, mailbox: mailbox)
+    }
+
     // MARK: - Get all accounts and mailboxes
 
     func fetchAccounts() async throws -> [(name: String, mailboxes: [String])] {

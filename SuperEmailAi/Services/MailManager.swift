@@ -19,6 +19,8 @@ final class MailManager: ObservableObject {
 
     @Published var isLoading = false
     @Published var isRefreshing = false
+    @Published var isLoadingMore = false
+    @Published var canLoadMore = true
     @Published var loadProgress: Double?     // 0...1 during a first (no-cache) load
     @Published var statusMessage = "Listo"
     @Published var errorMessage: String?
@@ -77,6 +79,7 @@ final class MailManager: ObservableObject {
     /// streams messages account-by-account so they appear as they arrive.
     func loadMessages(limit: Int = 1000) async {
         errorMessage = nil
+        canLoadMore = true
 
         let cached = cache.messages(account: currentAccount, mailbox: currentMailbox)
         if let cached, !cached.isEmpty {
@@ -132,6 +135,39 @@ final class MailManager: ObservableObject {
         }
         cache.update(collected, account: nil, mailbox: currentMailbox)
         statusMessage = "\(collected.count) correos"
+    }
+
+    /// Loads the next page of (older) messages and appends them — drives the
+    /// infinite scroll. The per-account offset is derived from how many of each
+    /// account's messages are already loaded.
+    func loadMoreMessages(pageSize: Int = 100) async {
+        guard !isLoadingMore, canLoadMore, !isLoading else { return }
+        isLoadingMore = true
+
+        let accountNames: [String] = currentAccount.map { [$0] } ?? accounts.map(\.name)
+        let existing = Set(allMessages.map(\.id))
+        var newMessages: [MailMessage] = []
+
+        for accName in accountNames {
+            let alreadyLoaded = allMessages.lazy.filter { $0.account == accName }.count
+            if let more = try? await bridge.fetchMessagesRange(
+                mailbox: currentMailbox, account: accName, offset: alreadyLoaded, limit: pageSize
+            ) {
+                newMessages.append(contentsOf: more.filter { !existing.contains($0.id) })
+            }
+        }
+
+        if newMessages.isEmpty {
+            canLoadMore = false
+        } else {
+            allMessages.append(contentsOf: newMessages)
+            buildSenderGroups()
+            applyFilters()
+            cache.update(allMessages, account: currentAccount, mailbox: currentMailbox)
+            statusMessage = "\(allMessages.count) correos"
+        }
+
+        isLoadingMore = false
     }
 
     // MARK: - Reading a message
