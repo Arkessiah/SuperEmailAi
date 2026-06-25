@@ -200,13 +200,13 @@ struct MessageRow: View {
                 .fill(message.isRead ? Color.clear : Color.accentColor)
                 .frame(width: 8, height: 8)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack {
                     Text(message.sender)
                         .font(.system(.body, weight: message.isRead ? .regular : .semibold))
                         .lineLimit(1)
                     Spacer()
-                    Text(message.dateReceived, style: .date)
+                    Text(dateText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -216,7 +216,16 @@ struct MessageRow: View {
                     .lineLimit(1)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
+        .padding(.horizontal, 4)
+    }
+
+    /// Time for today's messages, date for older ones (Mail/Spark style).
+    private var dateText: String {
+        if Calendar.current.isDateInToday(message.dateReceived) {
+            return message.dateReceived.formatted(date: .omitted, time: .shortened)
+        }
+        return message.dateReceived.formatted(date: .abbreviated, time: .omitted)
     }
 }
 
