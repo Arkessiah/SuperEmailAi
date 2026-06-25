@@ -332,7 +332,19 @@ struct MessageDetailPane: View {
                         .font(.caption)
                 }
                 .buttonStyle(.bordered)
+
                 Spacer()
+
+                if manager.openedHTML != nil && !manager.showRemoteImages {
+                    Button {
+                        manager.showRemoteImages = true
+                    } label: {
+                        Label("Mostrar imágenes", systemImage: "photo")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Cargar imágenes remotas (puede avisar al remitente de que abriste el correo)")
+                }
             }
             .padding(8)
 
@@ -363,7 +375,7 @@ struct MessageDetailPane: View {
                     ProgressView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let html = manager.openedHTML {
-                    HTMLView(html: html)
+                    HTMLView(html: html, blockRemote: !manager.showRemoteImages)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ScrollView {

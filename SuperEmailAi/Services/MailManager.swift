@@ -12,6 +12,7 @@ final class MailManager: ObservableObject {
     @Published var duplicateGroups: [DuplicateGroup] = []
     @Published var mailboxes: [String] = []
     @Published var accounts: [MailAccount] = []
+    @Published var unreadByAccount: [String: Int] = [:]   // account name -> INBOX unread
 
     @Published var searchText: String = "" { didSet { applyFilters() } }
     @Published var selectedSender: SenderGroup? = nil
@@ -36,6 +37,7 @@ final class MailManager: ObservableObject {
     @Published var openedBody: String = ""
     @Published var openedHTML: String?
     @Published var isLoadingBody = false
+    @Published var showRemoteImages = false   // per-message opt-in to remote content
 
     /// App mode: a standard reader (Spark-like) vs the sender-grouping cleanup tool.
     @Published var mode: AppMode = .lectura
@@ -108,6 +110,9 @@ final class MailManager: ObservableObject {
         if let account = currentAccount {
             if let fresh = try? await bridge.fetchMessages(from: currentMailbox, account: account, limit: limit) {
                 allMessages = fresh
+                if currentMailbox == "INBOX" {
+                    unreadByAccount[account] = fresh.filter { !$0.isRead }.count
+                }
                 buildSenderGroups()
                 applyFilters()
                 cache.update(fresh, account: account, mailbox: currentMailbox)
@@ -126,6 +131,9 @@ final class MailManager: ObservableObject {
         for (index, account) in targets.enumerated() {
             if let fresh = try? await bridge.fetchMessages(from: currentMailbox, account: account.name, limit: perAccount) {
                 collected.append(contentsOf: fresh)
+                if currentMailbox == "INBOX" {
+                    unreadByAccount[account.name] = fresh.filter { !$0.isRead }.count
+                }
                 allMessages = collected
                 buildSenderGroups()
                 applyFilters()
@@ -190,6 +198,7 @@ final class MailManager: ObservableObject {
         openedMessage = message
         openedBody = ""
         openedHTML = nil
+        showRemoteImages = false
         isLoadingBody = true
         do {
             let account = message.account.isEmpty ? nil : message.account
@@ -253,6 +262,7 @@ final class MailManager: ObservableObject {
             if account.name == currentAccount && mailbox == currentMailbox { continue }
             if let fresh = try? await bridge.fetchMessages(from: mailbox, account: account.name, limit: perMailbox) {
                 cache.update(fresh, account: account.name, mailbox: mailbox)
+                unreadByAccount[account.name] = fresh.filter { !$0.isRead }.count
             }
         }
     }

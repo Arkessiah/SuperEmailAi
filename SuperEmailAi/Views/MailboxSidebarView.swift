@@ -24,8 +24,19 @@ struct MailboxSidebarView: View {
                             mailboxRow(account: account.name, mailbox: mb)
                         }
                     } label: {
-                        Label(account.name, systemImage: "person.crop.circle")
-                            .lineLimit(1)
+                        HStack(spacing: 6) {
+                            Label(account.name, systemImage: "person.crop.circle")
+                                .lineLimit(1)
+                            Spacer()
+                            if let unread = manager.unreadByAccount[account.name], unread > 0 {
+                                Text("\(unread)")
+                                    .font(.caption2.weight(.semibold).monospacedDigit())
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 1)
+                                    .background(Color.appControl, in: Capsule())
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
                 }
             }
