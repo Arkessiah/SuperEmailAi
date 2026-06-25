@@ -138,10 +138,6 @@ struct MessageListView: View {
                                     Task { await manager.loadMoreMessages() }
                                 }
                             }
-                            .contentShape(Rectangle())
-                            .simultaneousGesture(TapGesture(count: 2).onEnded {
-                                Task { await manager.openForReading(msg) }
-                            })
                             .contextMenu {
                                 let targets = manager.selectedMessages.contains(msg.id)
                                     ? displayedMessages.filter { manager.selectedMessages.contains($0.id) }
@@ -188,6 +184,14 @@ struct MessageListView: View {
                         messagesToDelete = manager.allMessages.filter { manager.selectedMessages.contains($0.id) }
                         showDeleteConfirmation = true
                     }
+                }
+                .onKeyPress(.return) {
+                    if manager.selectedMessages.count == 1, let id = manager.selectedMessages.first,
+                       let msg = displayedMessages.first(where: { $0.id == id }) {
+                        Task { await manager.openForReading(msg) }
+                        return .handled
+                    }
+                    return .ignored
                 }
             }
         }
