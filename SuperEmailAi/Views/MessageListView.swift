@@ -5,17 +5,24 @@ struct MessageListView: View {
     @Binding var showMoveSheet: Bool
     @Binding var moveTarget: ContentView.MoveTarget?
     @State private var searchText = ""
+    @State private var category: MailCategory? = nil
     @State private var showDeleteConfirmation = false
     @State private var messagesToDelete: [MailMessage] = []
 
     var displayedMessages: [MailMessage] {
-        if searchText.isEmpty { return manager.filteredMessages }
-        let query = searchText.lowercased()
-        return manager.filteredMessages.filter {
-            $0.subject.lowercased().contains(query) ||
-            $0.sender.lowercased().contains(query) ||
-            $0.senderAddress.lowercased().contains(query)
+        var list = manager.filteredMessages
+        if let category {
+            list = list.filter { $0.category == category }
         }
+        if !searchText.isEmpty {
+            let query = searchText.lowercased()
+            list = list.filter {
+                $0.subject.lowercased().contains(query) ||
+                $0.sender.lowercased().contains(query) ||
+                $0.senderAddress.lowercased().contains(query)
+            }
+        }
+        return list
     }
 
     var body: some View {
@@ -112,6 +119,20 @@ struct MessageListView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(.bar)
+
+            Picker("", selection: Binding(
+                get: { category?.rawValue ?? "Todo" },
+                set: { category = ($0 == "Todo") ? nil : MailCategory(rawValue: $0) }
+            )) {
+                Text("Todo").tag("Todo")
+                ForEach(MailCategory.allCases, id: \.self) { c in
+                    Text(c.rawValue).tag(c.rawValue)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
 
             Divider()
 

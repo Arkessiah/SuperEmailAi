@@ -35,6 +35,36 @@ struct MailMessage: Identifiable, Hashable, Codable {
     }
 }
 
+enum MailCategory: String, CaseIterable {
+    case personas = "Personas"
+    case boletines = "Boletines"
+    case notificaciones = "Notificaciones"
+}
+
+extension MailMessage {
+    /// Heuristic Smart-Inbox bucket based on the sender (no headers needed).
+    /// A future on-device AI / List-Unsubscribe parsing can refine this.
+    var category: MailCategory {
+        let full = "\(sender) \(senderAddress)".lowercased()
+        let local = senderAddress.split(separator: "@").first.map { $0.lowercased() } ?? ""
+
+        let notification = ["no-reply", "noreply", "no_reply", "donotreply", "do-not-reply",
+                            "do_not_reply", "notification", "notifications", "mailer-daemon",
+                            "postmaster", "bounce", "automated", "auto-confirm", "alert"]
+        if notification.contains(where: { local.contains($0) || full.contains($0) }) {
+            return .notificaciones
+        }
+
+        let newsletter = ["newsletter", "marketing", "promo", "promotion", "offers", "deals",
+                          "mailing", "campaign", "news@", "updates@", "digest", "boletin", "noticias"]
+        if newsletter.contains(where: { local.contains($0) || full.contains($0) }) {
+            return .boletines
+        }
+
+        return .personas
+    }
+}
+
 struct SenderGroup: Identifiable {
     let id: String
     let address: String
