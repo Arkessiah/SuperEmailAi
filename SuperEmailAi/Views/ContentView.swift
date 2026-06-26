@@ -155,18 +155,20 @@ struct ContentView: View {
                     }
                     .frame(width: 150)
 
-                    Button {
-                        Task { await manager.loadMessages() }
-                    } label: {
-                        Label("Cargar", systemImage: "arrow.clockwise")
-                    }
-                    .keyboardShortcut("r", modifiers: .command)
-
                     if manager.isLoading {
                         ProgressView()
                             .scaleEffect(0.7)
                     }
                 }
+            }
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    Task { await manager.loadMessages() }
+                } label: {
+                    Label("Refrescar", systemImage: "arrow.clockwise")
+                }
+                .keyboardShortcut("r", modifiers: .command)
+                .help("Refrescar correos (⌘R)")
             }
         }
         .sheet(isPresented: $showMoveSheet) {
