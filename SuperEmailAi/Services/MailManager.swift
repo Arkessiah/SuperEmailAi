@@ -216,6 +216,18 @@ final class MailManager: ObservableObject {
             openedBody = "(No se pudo cargar el contenido: \(error.localizedDescription))"
         }
         isLoadingBody = false
+
+        // Mark as read on open (Spark behavior).
+        if !message.isRead {
+            let account = message.account.isEmpty ? nil : message.account
+            _ = try? await bridge.setReadStatus(ids: [message.messageId], read: true, mailbox: message.mailbox, account: account)
+            if let index = allMessages.firstIndex(where: { $0.id == message.id }) {
+                allMessages[index] = allMessages[index].with(isRead: true)
+                buildSenderGroups()
+                applyFilters()
+                cache.update(allMessages, account: currentAccount, mailbox: currentMailbox)
+            }
+        }
     }
 
     // MARK: - Accounts
