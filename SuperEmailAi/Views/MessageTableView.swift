@@ -6,8 +6,10 @@ import AppKit
 /// keyboard triage (J/K move, E archive, U read, Delete trash, Return open).
 struct MessageTableView: NSViewRepresentable {
     let messages: [MailMessage]
+    var importantSenders: Set<String> = []
     @Binding var selection: Set<String>
     var onOpen: (MailMessage) -> Void
+    var onToggleImportant: (MailMessage) -> Void = { _ in }
     var onDelete: () -> Void
     var onArchive: () -> Void
     var onToggleRead: () -> Void
@@ -56,7 +58,9 @@ struct MessageTableView: NSViewRepresentable {
         let oldIDs = context.coordinator.messages.map(\.id)
         let newIDs = messages.map(\.id)
         context.coordinator.messages = messages
-        if oldIDs != newIDs {
+        let importantChanged = context.coordinator.importantSenders != importantSenders
+        context.coordinator.importantSenders = importantSenders
+        if oldIDs != newIDs || importantChanged {
             table.reloadData()
         }
 
@@ -73,6 +77,7 @@ struct MessageTableView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
         var parent: MessageTableView
         var messages: [MailMessage]
+        var importantSenders: Set<String> = []
         weak var tableView: NSTableView?
         var isSyncing = false
 
@@ -88,7 +93,9 @@ struct MessageTableView: NSViewRepresentable {
             if row >= messages.count - 6 {
                 DispatchQueue.main.async { self.parent.onLoadMore() }
             }
-            let hosting = NSHostingView(rootView: MessageRow(message: messages[row]))
+            let message = messages[row]
+            let important = parent.importantSenders.contains(message.senderAddress)
+            let hosting = NSHostingView(rootView: MessageRow(message: message, isImportant: important))
             hosting.layer?.backgroundColor = .clear
             return hosting
         }
@@ -156,6 +163,17 @@ struct MessageTableView: NSViewRepresentable {
             let mov = NSMenuItem(title: "Mover \(count)…", action: #selector(moveAction), keyEquivalent: "")
             mov.target = self
             menu.addItem(mov)
+
+            if let row = table.selectedRowIndexes.first, messages.indices.contains(row) {
+                let isImportant = importantSenders.contains(messages[row].senderAddress)
+                menu.addItem(.separator())
+                let star = NSMenuItem(
+                    title: isImportant ? "Quitar importancia al remitente" : "Marcar remitente como importante",
+                    action: #selector(toggleImportantAction), keyEquivalent: ""
+                )
+                star.target = self
+                menu.addItem(star)
+            }
         }
 
         @objc private func openAction() {
@@ -165,6 +183,10 @@ struct MessageTableView: NSViewRepresentable {
 
         @objc private func deleteAction() { parent.onDelete() }
         @objc private func moveAction() { parent.onMove() }
+        @objc private func toggleImportantAction() {
+            guard let row = tableView?.selectedRow, messages.indices.contains(row) else { return }
+            parent.onToggleImportant(messages[row])
+        }
     }
 }
 

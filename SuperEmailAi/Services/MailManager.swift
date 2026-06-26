@@ -14,6 +14,8 @@ final class MailManager: ObservableObject {
     @Published var accounts: [MailAccount] = []
     @Published var unreadByAccount: [String: Int] = [:]   // account name -> INBOX unread
     @Published var newsletterSenders: Set<String> = []    // senders confirmed as newsletters (List-Unsubscribe)
+    @Published var importantSenders: Set<String> = []     // senders scored as important (float to top)
+    @Published var sortByImportance = false { didSet { applyFilters() } }
 
     @Published var searchText: String = "" { didSet { applyFilters() } }
     @Published var selectedSender: SenderGroup? = nil
@@ -64,6 +66,19 @@ final class MailManager: ObservableObject {
 
     init() {
         newsletterSenders = Set(UserDefaults.standard.stringArray(forKey: "newsletterSenders") ?? [])
+        importantSenders = Set(UserDefaults.standard.stringArray(forKey: "importantSenders") ?? [])
+    }
+
+    /// Toggles a sender's "important" score (used by the sort-by-importance view).
+    func toggleImportant(_ senderAddress: String) {
+        guard !senderAddress.isEmpty else { return }
+        if importantSenders.contains(senderAddress) {
+            importantSenders.remove(senderAddress)
+        } else {
+            importantSenders.insert(senderAddress)
+        }
+        UserDefaults.standard.set(Array(importantSenders), forKey: "importantSenders")
+        applyFilters()
     }
 
     /// Smart-Inbox category for a message, refined by senders we've confirmed are
@@ -795,8 +810,17 @@ final class MailManager: ObservableObject {
             }
         }
 
-        // Newest first.
-        filteredMessages.sort { $0.dateReceived > $1.dateReceived }
+        // Sort: important senders first (if enabled), then newest first.
+        if sortByImportance {
+            filteredMessages.sort { a, b in
+                let ia = importantSenders.contains(a.senderAddress)
+                let ib = importantSenders.contains(b.senderAddress)
+                if ia != ib { return ia }
+                return a.dateReceived > b.dateReceived
+            }
+        } else {
+            filteredMessages.sort { $0.dateReceived > $1.dateReceived }
+        }
     }
 
     func selectSender(_ sender: SenderGroup?) {

@@ -104,6 +104,16 @@ struct MessageListView: View {
                 }
 
                 Button {
+                    manager.sortByImportance.toggle()
+                } label: {
+                    Label("Importancia", systemImage: manager.sortByImportance ? "star.fill" : "star")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .tint(manager.sortByImportance ? .yellow : nil)
+                .help("Ordenar por importancia del remitente (en vez de por fecha)")
+
+                Button {
                     if manager.selectedMessages.count == displayedMessages.count {
                         manager.deselectAll()
                     } else {
@@ -151,8 +161,10 @@ struct MessageListView: View {
             } else {
                 MessageTableView(
                     messages: displayedMessages,
+                    importantSenders: manager.importantSenders,
                     selection: $manager.selectedMessages,
                     onOpen: { msg in Task { await manager.openForReading(msg) } },
+                    onToggleImportant: { manager.toggleImportant($0.senderAddress) },
                     onDelete: {
                         if !manager.selectedMessages.isEmpty {
                             messagesToDelete = manager.allMessages.filter { manager.selectedMessages.contains($0.id) }
@@ -179,6 +191,7 @@ struct MessageListView: View {
 
 struct MessageRow: View {
     let message: MailMessage
+    var isImportant: Bool = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -188,6 +201,11 @@ struct MessageRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack {
+                    if isImportant {
+                        Image(systemName: "star.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.yellow)
+                    }
                     Text(message.sender)
                         .font(.system(.body, weight: message.isRead ? .regular : .semibold))
                         .lineLimit(1)
