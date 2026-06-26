@@ -69,6 +69,7 @@ final class MailManager: ObservableObject {
 
     private let bridge = MailBridge.shared
     private let cache = MailCache.shared
+    private let store = MessageStore.shared   // Phase 1: SQLite index (write in parallel)
 
     init() {
         newsletterSenders = Set(UserDefaults.standard.stringArray(forKey: "newsletterSenders") ?? [])
@@ -263,6 +264,7 @@ final class MailManager: ObservableObject {
                 buildSenderGroups()
                 applyFilters()
                 cache.update(fresh, account: account, mailbox: currentMailbox)
+                store.upsert(fresh)
                 statusMessage = "\(fresh.count) correos"
             } else if allMessages.isEmpty {
                 statusMessage = "Error al cargar"
@@ -278,6 +280,7 @@ final class MailManager: ObservableObject {
         for (index, account) in targets.enumerated() {
             if let fresh = try? await bridge.fetchMessages(from: currentMailbox, account: account.name, limit: perAccount) {
                 collected.append(contentsOf: fresh)
+                store.upsert(fresh)
                 if currentMailbox == "INBOX" {
                     unreadByAccount[account.name] = fresh.filter { !$0.isRead }.count
                 }
@@ -319,6 +322,7 @@ final class MailManager: ObservableObject {
             buildSenderGroups()
             applyFilters()
             cache.update(allMessages, account: currentAccount, mailbox: currentMailbox)
+            store.upsert(newMessages)
             statusMessage = "\(allMessages.count) correos"
         }
 
@@ -426,6 +430,7 @@ final class MailManager: ObservableObject {
             if account.name == currentAccount && mailbox == currentMailbox { continue }
             if let fresh = try? await bridge.fetchMessages(from: mailbox, account: account.name, limit: perMailbox) {
                 cache.update(fresh, account: account.name, mailbox: mailbox)
+                store.upsert(fresh)
                 unreadByAccount[account.name] = fresh.filter { !$0.isRead }.count
             }
         }
