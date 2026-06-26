@@ -10,7 +10,8 @@ struct MessageListView: View {
     @State private var messagesToDelete: [MailMessage] = []
 
     var displayedMessages: [MailMessage] {
-        var list = manager.filteredMessages
+        // When the toolbar search is active, show global FTS results from the index.
+        var list = manager.searchResults ?? manager.filteredMessages
         if let category {
             list = list.filter { manager.category(for: $0) == category }
         }

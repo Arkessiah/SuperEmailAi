@@ -23,7 +23,8 @@ final class MailManager: ObservableObject {
         case size = "Tamaño"
     }
 
-    @Published var searchText: String = "" { didSet { applyFilters() } }
+    @Published var searchText: String = "" { didSet { runIndexSearch() } }
+    @Published var searchResults: [MailMessage]? = nil   // global FTS results (nil = not searching)
     @Published var selectedSender: SenderGroup? = nil
     @Published var selectedMessages: Set<String> = []
 
@@ -366,7 +367,7 @@ final class MailManager: ObservableObject {
                 account: account
             )
             openedBody = raw.content
-            openedRecipients = raw.recipients
+            openedRecipients = raw.recipients.isEmpty ? MIMEParser.recipients(fromSource: raw.source) : raw.recipients
             openedHTML = MIMEParser.htmlBody(fromSource: raw.source)
             openedUnsubscribeURL = MIMEParser.listUnsubscribe(fromSource: raw.source).https
             if openedUnsubscribeURL != nil {
@@ -915,6 +916,12 @@ final class MailManager: ObservableObject {
         case .dateAsc:
             senderGroups.sort { $0.latestDate < $1.latestDate }
         }
+    }
+
+    /// Global full-text search over the SQLite index (FTS5). Empty query exits search.
+    func runIndexSearch() {
+        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        searchResults = q.isEmpty ? nil : store.search(query: q, limit: 1000)
     }
 
     private func applyFilters() {

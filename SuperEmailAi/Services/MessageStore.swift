@@ -82,6 +82,15 @@ final class MessageStore {
             try db.create(index: "idx_message_date", on: "message", columns: ["dateReceived"])
             try db.create(index: "idx_message_sender", on: "message", columns: ["senderAddress"])
         }
+        migrator.registerMigration("fts5") { db in
+            try db.create(virtualTable: "message_ft", using: FTS5()) { t in
+                t.synchronize(withTable: "message")
+                t.column("subject")
+                t.column("sender")
+                t.column("senderAddress")
+                t.tokenizer = .unicode61()
+            }
+        }
         return migrator
     }
 
@@ -113,6 +122,25 @@ final class MessageStore {
                 .order(Column("dateReceived").desc)
                 .limit(limit)
                 .fetchAll(db)
+            return records.map { $0.toMailMessage() }
+        }) ?? []
+    }
+
+    /// Full-text search over subject/sender across the whole index (newest first).
+    func search(query: String, limit: Int = 1000) -> [MailMessage] {
+        guard let dbQueue,
+              let pattern = FTS5Pattern(matchingAllTokensIn: query),
+              !query.trimmingCharacters(in: .whitespaces).isEmpty
+        else { return [] }
+        let sql = """
+            SELECT message.* FROM message
+            JOIN message_ft ON message_ft.rowid = message.rowid
+            WHERE message_ft MATCH ?
+            ORDER BY message.dateReceived DESC
+            LIMIT ?
+            """
+        return (try? dbQueue.read { db -> [MailMessage] in
+            let records = try MessageRecord.fetchAll(db, sql: sql, arguments: [pattern, limit])
             return records.map { $0.toMailMessage() }
         }) ?? []
     }

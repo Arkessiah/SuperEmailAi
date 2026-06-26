@@ -12,6 +12,48 @@ enum MIMEParser {
         return html.contains("<") ? html : nil
     }
 
+    /// Extracts the `To:` recipients (addresses) from the raw source headers.
+    static func recipients(fromSource source: String) -> [String] {
+        let value = headerValue("To", in: source)
+        guard !value.isEmpty else { return [] }
+
+        var result: [String] = []
+        var rest = Substring(value)
+        while let lt = rest.firstIndex(of: "<"), let gt = rest[lt...].firstIndex(of: ">") {
+            let addr = String(rest[rest.index(after: lt)..<gt]).trimmingCharacters(in: .whitespaces)
+            if addr.contains("@") { result.append(addr) }
+            rest = rest[rest.index(after: gt)...]
+        }
+        if result.isEmpty {
+            result = value.components(separatedBy: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { $0.contains("@") }
+        }
+        if result.isEmpty { result = [value] }
+        return result
+    }
+
+    /// Returns a header's value (joining folded continuation lines).
+    private static func headerValue(_ name: String, in source: String) -> String {
+        let normalized = source.replacingOccurrences(of: "\r\n", with: "\n")
+        let range: Range<String.Index>?
+        if normalized.lowercased().hasPrefix("\(name.lowercased()):") {
+            range = normalized.range(of: "\(name):", options: .caseInsensitive)
+        } else {
+            range = normalized.range(of: "\n\(name):", options: .caseInsensitive)
+        }
+        guard let range else { return "" }
+
+        let lines = normalized[range.upperBound...].components(separatedBy: "\n")
+        var value = lines.first ?? ""
+        var i = 1
+        while i < lines.count, let first = lines[i].first, first == " " || first == "\t" {
+            value += " " + lines[i].trimmingCharacters(in: .whitespaces)
+            i += 1
+        }
+        return value.trimmingCharacters(in: .whitespaces)
+    }
+
     /// Extracts the `List-Unsubscribe` header (the https URL and/or mailto), used
     /// to offer a one-click unsubscribe. Returns the first https URL and mailto found.
     static func listUnsubscribe(fromSource source: String) -> (https: URL?, mailto: String?) {
