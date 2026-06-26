@@ -263,15 +263,15 @@ final class MailManager: ObservableObject {
     private func refresh(limit: Int, withProgress: Bool) async {
         if let account = currentAccount {
             if let fresh = try? await bridge.fetchMessages(from: currentMailbox, account: account, limit: limit) {
-                allMessages = fresh
                 if currentMailbox == "INBOX" {
                     unreadByAccount[account] = fresh.filter { !$0.isRead }.count
                 }
+                if withProgress { allMessages = fresh } else { mergeFresh(fresh) }
                 buildSenderGroups()
                 applyFilters()
-                cache.update(fresh, account: account, mailbox: currentMailbox)
+                cache.update(allMessages, account: account, mailbox: currentMailbox)
                 store.upsert(fresh)
-                statusMessage = "\(fresh.count) correos"
+                statusMessage = "\(allMessages.count) correos"
             } else if allMessages.isEmpty {
                 statusMessage = "Error al cargar"
             }
@@ -290,15 +290,36 @@ final class MailManager: ObservableObject {
                 if currentMailbox == "INBOX" {
                     unreadByAccount[account.name] = fresh.filter { !$0.isRead }.count
                 }
-                allMessages = collected
-                buildSenderGroups()
-                applyFilters()
+                // Only stream into the visible list when nothing is shown yet
+                // (no index/cache). Otherwise we merge once at the end to avoid
+                // the list collapsing and reordering ("things load and change").
+                if withProgress {
+                    allMessages = collected
+                    buildSenderGroups()
+                    applyFilters()
+                }
             }
-            if withProgress { loadProgress = Double(index + 1) / Double(targets.count) }
-            statusMessage = "Cargando… \(collected.count) correos"
+            if withProgress {
+                loadProgress = Double(index + 1) / Double(targets.count)
+                statusMessage = "Cargando… \(collected.count) correos"
+            }
         }
-        cache.update(collected, account: nil, mailbox: currentMailbox)
-        statusMessage = "\(collected.count) correos"
+        if withProgress { allMessages = collected } else { mergeFresh(collected) }
+        buildSenderGroups()
+        applyFilters()
+        cache.update(allMessages, account: nil, mailbox: currentMailbox)
+        statusMessage = "\(allMessages.count) correos"
+    }
+
+    /// Merges freshly-fetched messages into `allMessages` without collapsing the
+    /// list: updates existing entries in place (read status, size) and appends
+    /// genuinely new ones, preserving order. Prevents the refresh flicker.
+    private func mergeFresh(_ fresh: [MailMessage]) {
+        guard !fresh.isEmpty else { return }
+        let freshByID = Dictionary(fresh.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let existingIDs = Set(allMessages.map(\.id))
+        allMessages = allMessages.map { freshByID[$0.id] ?? $0 }
+        allMessages.append(contentsOf: fresh.filter { !existingIDs.contains($0.id) })
     }
 
     /// Loads the next page of (older) messages and appends them — drives the
