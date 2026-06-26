@@ -5,10 +5,33 @@ struct ContentView: View {
     @State private var showDuplicates = false
     @State private var showMoveSheet = false
     @State private var showCleanup = false
+    @State private var showCommandPalette = false
     @State private var moveTarget: MoveTarget?
     @AppStorage("appAppearance") private var appearanceRaw = AppAppearance.dark.rawValue
 
     private var appearance: AppAppearance { AppAppearance(rawValue: appearanceRaw) ?? .system }
+
+    private var paletteCommands: [PaletteCommand] {
+        [
+            PaletteCommand(title: "Modo Lectura", icon: "envelope.open") { manager.mode = .lectura },
+            PaletteCommand(title: "Modo Limpieza", icon: "sparkles") { manager.mode = .limpieza },
+            PaletteCommand(title: "Refrescar correos", icon: "arrow.clockwise") {
+                Task { await manager.loadMessages() }
+            },
+            PaletteCommand(title: "Llévame a cero…", icon: "trash.slash") { showCleanup = true },
+            PaletteCommand(title: "Ver duplicados", icon: "doc.on.doc") {
+                manager.mode = .limpieza
+                manager.findDuplicates()
+                showDuplicates = true
+            },
+            PaletteCommand(title: "Marcar leído / no leído", icon: "envelope.badge") {
+                Task { await manager.toggleReadForSelection() }
+            },
+            PaletteCommand(title: "Archivar selección", icon: "archivebox") {
+                Task { await manager.archiveSelection() }
+            }
+        ]
+    }
 
     enum MoveTarget {
         case selected
@@ -135,6 +158,14 @@ struct ContentView: View {
         .sheet(isPresented: $showCleanup) {
             CleanupSheet()
         }
+        .sheet(isPresented: $showCommandPalette) {
+            CommandPaletteView(commands: paletteCommands)
+        }
+        .background(
+            Button("") { showCommandPalette = true }
+                .keyboardShortcut("k", modifiers: .command)
+                .opacity(0)
+        )
         .overlay(alignment: .bottom) {
             StatusBar()
         }
