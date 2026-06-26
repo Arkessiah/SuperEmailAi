@@ -67,6 +67,7 @@ final class MailManager: ObservableObject {
     init() {
         newsletterSenders = Set(UserDefaults.standard.stringArray(forKey: "newsletterSenders") ?? [])
         importantSenders = Set(UserDefaults.standard.stringArray(forKey: "importantSenders") ?? [])
+        loadAutoReply()
     }
 
     // MARK: - Alerts (incoming-mail monitor for important senders)
@@ -97,7 +98,7 @@ final class MailManager: ObservableObject {
     }
 
     private func checkForAlerts() async {
-        guard !importantSenders.isEmpty else { return }
+        guard !importantSenders.isEmpty || autoReplyEnabled else { return }
         for account in accounts {
             guard let recent = try? await bridge.fetchMessages(from: "INBOX", account: account.name, limit: 15) else { continue }
             for m in recent where !seenAlertIDs.contains(m.id) {
@@ -105,6 +106,7 @@ final class MailManager: ObservableObject {
                 if importantSenders.contains(m.senderAddress) {
                     alerts.insert(m, at: 0)
                 }
+                await maybeAutoReply(to: m)
             }
         }
         if alerts.count > 50 { alerts = Array(alerts.prefix(50)) }
@@ -112,6 +114,66 @@ final class MailManager: ObservableObject {
 
     func dismissAlert(_ id: String) { alerts.removeAll { $0.id == id } }
     func clearAlerts() { alerts.removeAll() }
+
+    // MARK: - Auto-reply (out-of-office)
+
+    enum AutoReplyScope: String, CaseIterable {
+        case importantOnly = "Solo importantes"
+        case all = "A todos"
+    }
+
+    @Published var autoReplyEnabled = false {
+        didSet { UserDefaults.standard.set(autoReplyEnabled, forKey: "autoReplyEnabled") }
+    }
+    @Published var autoReplyMessage = "" {
+        didSet { UserDefaults.standard.set(autoReplyMessage, forKey: "autoReplyMessage") }
+    }
+    @Published var autoReplyScopeRaw = AutoReplyScope.importantOnly.rawValue {
+        didSet { UserDefaults.standard.set(autoReplyScopeRaw, forKey: "autoReplyScope") }
+    }
+    @Published var autoReplyCount = 0
+    private var repliedSenders: Set<String> = []
+
+    var autoReplyScope: AutoReplyScope { AutoReplyScope(rawValue: autoReplyScopeRaw) ?? .importantOnly }
+
+    private func loadAutoReply() {
+        autoReplyEnabled = UserDefaults.standard.bool(forKey: "autoReplyEnabled")
+        autoReplyMessage = UserDefaults.standard.string(forKey: "autoReplyMessage") ?? ""
+        autoReplyScopeRaw = UserDefaults.standard.string(forKey: "autoReplyScope") ?? AutoReplyScope.importantOnly.rawValue
+        repliedSenders = Set(UserDefaults.standard.stringArray(forKey: "repliedSenders") ?? [])
+        autoReplyCount = repliedSenders.count
+    }
+
+    func resetRepliedSenders() {
+        repliedSenders = []
+        autoReplyCount = 0
+        UserDefaults.standard.removeObject(forKey: "repliedSenders")
+    }
+
+    /// Sends the auto-reply for a newly-arrived message if it qualifies. Safe by
+    /// design: only to real people (.personas), once per sender, never to
+    /// notifications / newsletters / no-reply.
+    private func maybeAutoReply(to message: MailMessage) async {
+        guard autoReplyEnabled,
+              !autoReplyMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !message.senderAddress.isEmpty,
+              !message.account.isEmpty,
+              !repliedSenders.contains(message.senderAddress),
+              category(for: message) == .personas
+        else { return }
+
+        guard autoReplyScope == .all || importantSenders.contains(message.senderAddress) else { return }
+
+        let subject = message.subject.lowercased().hasPrefix("re:") ? message.subject : "Re: \(message.subject)"
+        do {
+            try await bridge.sendMail(to: message.senderAddress, subject: subject, body: autoReplyMessage, fromAccount: message.account)
+            repliedSenders.insert(message.senderAddress)
+            autoReplyCount = repliedSenders.count
+            UserDefaults.standard.set(Array(repliedSenders), forKey: "repliedSenders")
+        } catch {
+            // Silent; the next poll will retry.
+        }
+    }
 
     /// Toggles a sender's "important" score (used by the sort-by-importance view).
     func toggleImportant(_ senderAddress: String) {

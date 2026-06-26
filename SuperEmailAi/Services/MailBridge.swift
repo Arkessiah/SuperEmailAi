@@ -302,6 +302,30 @@ final class MailBridge {
         return parseMessages(from: descriptor, mailbox: mailbox)
     }
 
+    // MARK: - Send a message (used by auto-reply)
+
+    func sendMail(to recipient: String, subject: String, body: String, fromAccount: String) async throws {
+        func esc(_ s: String) -> String {
+            s.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+                .replacingOccurrences(of: "\n", with: "\" & return & \"")
+        }
+        let script = """
+        tell application "Mail"
+            set acc to account "\(esc(fromAccount))"
+            set theMessage to make new outgoing message with properties {subject:"\(esc(subject))", content:"\(esc(body))", visible:false}
+            tell theMessage
+                make new to recipient at end of to recipients with properties {address:"\(esc(recipient))"}
+            end tell
+            try
+                set sender of theMessage to (item 1 of (email addresses of acc))
+            end try
+            send theMessage
+        end tell
+        """
+        _ = try await runAppleScript(script)
+    }
+
     // MARK: - Fetch a single message's body (plain text + raw source for HTML)
 
     func fetchMessageRaw(id: Int, mailbox: String, account: String? = nil) async throws -> (content: String, source: String) {

@@ -1,34 +1,46 @@
 import SwiftUI
 
-/// "Inicio" dashboard: a Quick-Start section showcasing upcoming features as
-/// cards (FlowAI-style). The features themselves are not built yet.
+/// "Inicio" dashboard: a Quick-Start section showcasing features as cards
+/// (FlowAI-style). Auto-respuesta is live (opens its config); the others are
+/// teasers for now.
 struct HomeView: View {
     @EnvironmentObject var manager: MailManager
+    @State private var showAutoReply = false
 
     private struct Feature: Identifiable {
         let id = UUID()
         let icon: String
         let title: String
         let description: String
+        let badge: String
+        var action: (() -> Void)?
     }
 
-    private let features: [Feature] = [
-        Feature(
-            icon: "arrowshape.turn.up.left.fill",
-            title: "Auto-respuesta",
-            description: "Responde automáticamente cuando estás de vacaciones, en buzones concretos o a ciertas peticiones. Sencillo ahora; en el futuro, automatiza procesos con tu correo."
-        ),
-        Feature(
-            icon: "chart.line.uptrend.xyaxis",
-            title: "Scoring de remitentes",
-            description: "Puntúa a tus remitentes para que sus correos se posicionen mejor. Permite una vista y orden por importancia, no solo por fecha."
-        ),
-        Feature(
-            icon: "bell.badge.fill",
-            title: "Alertas",
-            description: "Recibe un aviso al instante cuando llegue un correo de alguien que te importa."
-        )
-    ]
+    private var features: [Feature] {
+        [
+            Feature(
+                icon: "arrowshape.turn.up.left.fill",
+                title: "Auto-respuesta",
+                description: "Responde automáticamente cuando estás de vacaciones, en buzones concretos o a ciertas peticiones. Sencillo ahora; en el futuro, automatiza procesos con tu correo.",
+                badge: manager.autoReplyEnabled ? "Activada" : "Configurar",
+                action: { showAutoReply = true }
+            ),
+            Feature(
+                icon: "chart.line.uptrend.xyaxis",
+                title: "Scoring de remitentes",
+                description: "Puntúa a tus remitentes para que sus correos se posicionen mejor. Marca importantes (⭐) y ordena por importancia, no solo por fecha.",
+                badge: "Disponible",
+                action: nil
+            ),
+            Feature(
+                icon: "bell.badge.fill",
+                title: "Alertas",
+                description: "Recibe un aviso al instante (campana 🔔) cuando llegue un correo de alguien importante.",
+                badge: "Disponible",
+                action: nil
+            )
+        ]
+    }
 
     var body: some View {
         ScrollView {
@@ -51,7 +63,13 @@ struct HomeView: View {
                         spacing: 16
                     ) {
                         ForEach(features) { feature in
-                            FeatureCard(icon: feature.icon, title: feature.title, description: feature.description)
+                            FeatureCard(
+                                icon: feature.icon,
+                                title: feature.title,
+                                description: feature.description,
+                                badge: feature.badge,
+                                action: feature.action
+                            )
                         }
                     }
                 }
@@ -60,6 +78,9 @@ struct HomeView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Color.appBackground)
+        .sheet(isPresented: $showAutoReply) {
+            AutoReplyView()
+        }
     }
 }
 
@@ -67,9 +88,11 @@ private struct FeatureCard: View {
     let icon: String
     let title: String
     let description: String
+    let badge: String
+    var action: (() -> Void)?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let card = VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
                 Image(systemName: icon)
                     .font(.title2)
@@ -77,7 +100,7 @@ private struct FeatureCard: View {
                     .frame(width: 36, height: 36)
                     .background(Color.appControl, in: RoundedRectangle(cornerRadius: 9))
                 Spacer()
-                Text("Próximamente")
+                Text(badge)
                     .font(.caption2.weight(.medium))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -85,8 +108,7 @@ private struct FeatureCard: View {
                     .foregroundStyle(.secondary)
             }
 
-            Text(title)
-                .font(.headline)
+            Text(title).font(.headline)
 
             Text(description)
                 .font(.subheadline)
@@ -98,5 +120,12 @@ private struct FeatureCard: View {
         .padding(16)
         .frame(maxWidth: .infinity, minHeight: 170, alignment: .topLeading)
         .cardStyle()
+
+        if let action {
+            Button(action: action) { card }
+                .buttonStyle(.plain)
+        } else {
+            card
+        }
     }
 }
