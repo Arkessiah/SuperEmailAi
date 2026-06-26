@@ -12,6 +12,7 @@ struct MessageTableView: NSViewRepresentable {
     var onArchive: () -> Void
     var onToggleRead: () -> Void
     var onLoadMore: () -> Void
+    var onMove: () -> Void = {}
 
     func makeNSView(context: Context) -> NSScrollView {
         let table = KeyTableView()
@@ -34,6 +35,11 @@ struct MessageTableView: NSViewRepresentable {
         table.keyHandler = { [weak coordinator = context.coordinator] key in
             coordinator?.handleKey(key) ?? false
         }
+
+        let menu = NSMenu()
+        menu.delegate = context.coordinator
+        table.menu = menu
+
         context.coordinator.tableView = table
 
         let scroll = NSScrollView()
@@ -64,7 +70,7 @@ struct MessageTableView: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
         var parent: MessageTableView
         var messages: [MailMessage]
         weak var tableView: NSTableView?
@@ -127,6 +133,38 @@ struct MessageTableView: NSViewRepresentable {
             table.selectRowIndexes([next], byExtendingSelection: false)
             table.scrollRowToVisible(next)
         }
+
+        // MARK: - Context menu
+
+        func menuNeedsUpdate(_ menu: NSMenu) {
+            menu.removeAllItems()
+            guard let table = tableView else { return }
+            let clicked = table.clickedRow
+            if clicked >= 0, !table.selectedRowIndexes.contains(clicked) {
+                table.selectRowIndexes([clicked], byExtendingSelection: false)
+            }
+            let count = table.selectedRowIndexes.count
+            guard count > 0 else { return }
+
+            let open = NSMenuItem(title: "Abrir", action: #selector(openAction), keyEquivalent: "")
+            open.target = self
+            menu.addItem(open)
+            menu.addItem(.separator())
+            let del = NSMenuItem(title: "Eliminar \(count)", action: #selector(deleteAction), keyEquivalent: "")
+            del.target = self
+            menu.addItem(del)
+            let mov = NSMenuItem(title: "Mover \(count)…", action: #selector(moveAction), keyEquivalent: "")
+            mov.target = self
+            menu.addItem(mov)
+        }
+
+        @objc private func openAction() {
+            guard let row = tableView?.selectedRow, messages.indices.contains(row) else { return }
+            parent.onOpen(messages[row])
+        }
+
+        @objc private func deleteAction() { parent.onDelete() }
+        @objc private func moveAction() { parent.onMove() }
     }
 }
 

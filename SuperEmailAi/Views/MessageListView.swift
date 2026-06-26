@@ -161,7 +161,13 @@ struct MessageListView: View {
                     },
                     onArchive: { Task { await manager.archiveSelection() } },
                     onToggleRead: { Task { await manager.toggleReadForSelection() } },
-                    onLoadMore: { Task { await manager.loadMoreMessages() } }
+                    onLoadMore: { Task { await manager.loadMoreMessages() } },
+                    onMove: {
+                        if !manager.selectedMessages.isEmpty {
+                            moveTarget = .selected
+                            showMoveSheet = true
+                        }
+                    }
                 )
             }
         }
