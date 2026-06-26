@@ -231,12 +231,16 @@ final class MailManager: ObservableObject {
         errorMessage = nil
         canLoadMore = true
 
-        let cached = cache.messages(account: currentAccount, mailbox: currentMailbox)
-        if let cached, !cached.isEmpty {
+        // Instant display from the SQLite index (falls back to the JSON cache).
+        let indexed = store.recent(account: currentAccount, mailbox: currentMailbox, limit: 1000)
+        let cached = indexed.isEmpty
+            ? (cache.messages(account: currentAccount, mailbox: currentMailbox) ?? [])
+            : indexed
+        if !cached.isEmpty {
             allMessages = cached
             buildSenderGroups()
             applyFilters()
-            statusMessage = "\(cached.count) en caché · actualizando…"
+            statusMessage = "\(cached.count) en índice · actualizando…"
             isRefreshing = true
             isLoading = false
             await refresh(limit: limit, withProgress: false)

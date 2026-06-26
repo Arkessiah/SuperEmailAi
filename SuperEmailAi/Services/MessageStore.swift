@@ -32,6 +32,14 @@ struct MessageRecord: Codable, FetchableRecord, PersistableRecord {
         isRead = m.isRead
         size = m.size
     }
+
+    func toMailMessage() -> MailMessage {
+        MailMessage(
+            id: id, subject: subject, sender: sender, senderAddress: senderAddress,
+            dateSent: dateSent, dateReceived: dateReceived, isRead: isRead,
+            mailbox: mailbox, account: account, messageId: messageId, size: size
+        )
+    }
 }
 
 final class MessageStore {
@@ -92,5 +100,20 @@ final class MessageStore {
     func count() -> Int {
         guard let dbQueue else { return 0 }
         return (try? dbQueue.read { db in try MessageRecord.fetchCount(db) }) ?? 0
+    }
+
+    /// Most-recent indexed messages for a view (newest first). `account == nil`
+    /// means all accounts. Used for instant display before the AppleScript refresh.
+    func recent(account: String?, mailbox: String, limit: Int) -> [MailMessage] {
+        guard let dbQueue else { return [] }
+        return (try? dbQueue.read { db -> [MailMessage] in
+            var request = MessageRecord.filter(Column("mailbox") == mailbox)
+            if let account { request = request.filter(Column("account") == account) }
+            let records = try request
+                .order(Column("dateReceived").desc)
+                .limit(limit)
+                .fetchAll(db)
+            return records.map { $0.toMailMessage() }
+        }) ?? []
     }
 }
