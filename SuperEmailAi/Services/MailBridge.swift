@@ -32,7 +32,7 @@ final class MailBridge {
                 repeat with i from 1 to msgCount
                     set msg to item i of theMessages
                     try
-                        set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, "\(account)"}
+                        set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, "\(account)", (message size of msg)}
                     end try
                 end repeat
                 return msgList
@@ -55,7 +55,7 @@ final class MailBridge {
                         if collected > \(limit - 1) then exit repeat
                         set msg to item i of theMessages
                         try
-                            set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, accName}
+                            set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, accName, (message size of msg)}
                             set collected to collected + 1
                         end try
                     end repeat
@@ -88,7 +88,7 @@ final class MailBridge {
                 set theMessages to messages startI thru endI of theMailbox
                 repeat with msg in theMessages
                     try
-                        set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, "\(account)"}
+                        set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, "\(account)", (message size of msg)}
                     end try
                 end repeat
             end try
@@ -270,7 +270,7 @@ final class MailBridge {
                 end try
                 repeat with msg in theMessages
                     try
-                        set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, "\(account)"}
+                        set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, "\(account)", (message size of msg)}
                     end try
                 end repeat
                 return msgList
@@ -289,7 +289,7 @@ final class MailBridge {
                     end try
                     repeat with msg in theMessages
                         try
-                            set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, accName}
+                            set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, accName, (message size of msg)}
                         end try
                     end repeat
                 end repeat
@@ -396,6 +396,7 @@ final class MailBridge {
             let isRead = record.atIndex(5)?.booleanValue ?? false
             let messageId = Int(record.atIndex(6)?.int32Value ?? 0)
             let account = record.numberOfItems >= 7 ? (record.atIndex(7)?.stringValue ?? "") : ""
+            let size = record.numberOfItems >= 8 ? Int(record.atIndex(8)?.int32Value ?? 0) : 0
 
             let senderAddress = extractEmail(from: senderRaw)
             let senderName = extractName(from: senderRaw)
@@ -410,7 +411,8 @@ final class MailBridge {
                 isRead: isRead,
                 mailbox: mailbox,
                 account: account,
-                messageId: messageId
+                messageId: messageId,
+                size: size
             ))
         }
 

@@ -11,6 +11,16 @@ struct MailMessage: Identifiable, Hashable, Codable {
     let mailbox: String
     let account: String
     let messageId: Int
+    var size: Int = 0   // bytes (0 if unknown)
+
+    /// Human-readable size (KB/MB).
+    var sizeText: String {
+        guard size > 0 else { return "" }
+        let mb = Double(size) / 1_048_576
+        if mb >= 1 { return String(format: "%.1f MB", mb) }
+        let kb = Double(size) / 1024
+        return String(format: "%.0f KB", max(kb, 1))
+    }
 
     var senderDomain: String {
         guard let atIndex = senderAddress.lastIndex(of: "@") else { return senderAddress }
@@ -30,7 +40,7 @@ struct MailMessage: Identifiable, Hashable, Codable {
         MailMessage(
             id: id, subject: subject, sender: sender, senderAddress: senderAddress,
             dateSent: dateSent, dateReceived: dateReceived, isRead: newValue,
-            mailbox: mailbox, account: account, messageId: messageId
+            mailbox: mailbox, account: account, messageId: messageId, size: size
         )
     }
 }

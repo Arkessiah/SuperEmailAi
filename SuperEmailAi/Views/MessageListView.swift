@@ -103,15 +103,19 @@ struct MessageListView: View {
                     )
                 }
 
-                Button {
-                    manager.sortByImportance.toggle()
+                Menu {
+                    Picker("Ordenar por", selection: $manager.messageSort) {
+                        ForEach(MailManager.MessageSort.allCases, id: \.self) { sort in
+                            Text(sort.rawValue).tag(sort)
+                        }
+                    }
                 } label: {
-                    Label("Importancia", systemImage: manager.sortByImportance ? "star.fill" : "star")
+                    Label("Orden: \(manager.messageSort.rawValue)", systemImage: "arrow.up.arrow.down")
                         .font(.caption)
                 }
-                .buttonStyle(.bordered)
-                .tint(manager.sortByImportance ? .yellow : nil)
-                .help("Ordenar por importancia del remitente (en vez de por fecha)")
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Ordenar por fecha, importancia del remitente o tamaño")
 
                 Button {
                     if manager.selectedMessages.count == displayedMessages.count {
@@ -210,6 +214,11 @@ struct MessageRow: View {
                         .font(.system(.body, weight: message.isRead ? .regular : .semibold))
                         .lineLimit(1)
                     Spacer()
+                    if !message.sizeText.isEmpty {
+                        Text(message.sizeText)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
                     Text(dateText)
                         .font(.caption)
                         .foregroundStyle(.secondary)

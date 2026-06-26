@@ -15,7 +15,13 @@ final class MailManager: ObservableObject {
     @Published var unreadByAccount: [String: Int] = [:]   // account name -> INBOX unread
     @Published var newsletterSenders: Set<String> = []    // senders confirmed as newsletters (List-Unsubscribe)
     @Published var importantSenders: Set<String> = []     // senders scored as important (float to top)
-    @Published var sortByImportance = false { didSet { applyFilters() } }
+    @Published var messageSort: MessageSort = .date { didSet { applyFilters() } }
+
+    enum MessageSort: String, CaseIterable {
+        case date = "Reciente"
+        case importance = "Importancia"
+        case size = "Tamaño"
+    }
 
     @Published var searchText: String = "" { didSet { applyFilters() } }
     @Published var selectedSender: SenderGroup? = nil
@@ -916,16 +922,18 @@ final class MailManager: ObservableObject {
             }
         }
 
-        // Sort: important senders first (if enabled), then newest first.
-        if sortByImportance {
+        switch messageSort {
+        case .date:
+            filteredMessages.sort { $0.dateReceived > $1.dateReceived }
+        case .importance:
             filteredMessages.sort { a, b in
                 let ia = importantSenders.contains(a.senderAddress)
                 let ib = importantSenders.contains(b.senderAddress)
                 if ia != ib { return ia }
                 return a.dateReceived > b.dateReceived
             }
-        } else {
-            filteredMessages.sort { $0.dateReceived > $1.dateReceived }
+        case .size:
+            filteredMessages.sort { $0.size > $1.size }
         }
     }
 

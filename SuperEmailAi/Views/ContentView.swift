@@ -198,8 +198,11 @@ struct ContentView: View {
             await manager.loadMessages()
             await manager.prefetchAllMailboxes()
         }
-        .onChange(of: manager.mode) {
+        .onChange(of: manager.mode) { _, newMode in
             showDuplicates = false
+            if newMode == .limpieza && manager.allMessages.isEmpty {
+                Task { await manager.loadMessages() }
+            }
         }
         .preferredColorScheme(appearance.colorScheme)
     }
