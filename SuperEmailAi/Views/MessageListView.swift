@@ -86,7 +86,6 @@ struct MessageListView: View {
                 )
             }
 
-            // Search + bulk actions
             HStack {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
@@ -150,92 +149,23 @@ struct MessageListView: View {
                          : "Prueba con otro termino de busqueda")
                 }
             } else {
-                ScrollViewReader { proxy in
-                List(selection: $manager.selectedMessages) {
-                    ForEach(displayedMessages) { msg in
-                        MessageRow(message: msg)
-                            .tag(msg.id)
-                            .onAppear {
-                                if searchText.isEmpty, msg.id == displayedMessages.last?.id {
-                                    Task { await manager.loadMoreMessages() }
-                                }
-                            }
-                            .contextMenu {
-                                let targets = manager.selectedMessages.contains(msg.id)
-                                    ? displayedMessages.filter { manager.selectedMessages.contains($0.id) }
-                                    : [msg]
-                                Button {
-                                    Task { await manager.openForReading(msg) }
-                                } label: {
-                                    Label("Abrir", systemImage: "envelope.open")
-                                }
-                                Divider()
-                                Button(role: .destructive) {
-                                    manager.selectedMessages = Set(targets.map(\.id))
-                                    messagesToDelete = targets
-                                    showDeleteConfirmation = true
-                                } label: {
-                                    Label("Eliminar \(targets.count)", systemImage: "trash")
-                                }
-                                Button {
-                                    manager.selectedMessages = Set(targets.map(\.id))
-                                    moveTarget = .selected
-                                    showMoveSheet = true
-                                } label: {
-                                    Label("Mover \(targets.count)…", systemImage: "folder")
-                                }
-                            }
-                    }
-
-                    if manager.isLoadingMore {
-                        HStack {
-                            Spacer()
-                            ProgressView().controlSize(.small)
-                            Text("Cargando más…")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Spacer()
+                MessageTableView(
+                    messages: displayedMessages,
+                    selection: $manager.selectedMessages,
+                    onOpen: { msg in Task { await manager.openForReading(msg) } },
+                    onDelete: {
+                        if !manager.selectedMessages.isEmpty {
+                            messagesToDelete = manager.allMessages.filter { manager.selectedMessages.contains($0.id) }
+                            showDeleteConfirmation = true
                         }
-                        .listRowSeparator(.hidden)
-                    }
-                }
-                .listStyle(.inset)
-                .scrollContentBackground(.hidden)
-                .onDeleteCommand {
-                    if !manager.selectedMessages.isEmpty {
-                        messagesToDelete = manager.allMessages.filter { manager.selectedMessages.contains($0.id) }
-                        showDeleteConfirmation = true
-                    }
-                }
-                .onKeyPress(.return) {
-                    if manager.selectedMessages.count == 1, let id = manager.selectedMessages.first,
-                       let msg = displayedMessages.first(where: { $0.id == id }) {
-                        Task { await manager.openForReading(msg) }
-                        return .handled
-                    }
-                    return .ignored
-                }
-                .onKeyPress("j") { moveSelection(by: 1, proxy: proxy); return .handled }
-                .onKeyPress("k") { moveSelection(by: -1, proxy: proxy); return .handled }
-                .onKeyPress("e") { Task { await manager.archiveSelection() }; return .handled }
-                .onKeyPress("u") { Task { await manager.toggleReadForSelection() }; return .handled }
-                }
+                    },
+                    onArchive: { Task { await manager.archiveSelection() } },
+                    onToggleRead: { Task { await manager.toggleReadForSelection() } },
+                    onLoadMore: { Task { await manager.loadMoreMessages() } }
+                )
             }
         }
         .background(Color.appBackground)
-    }
-
-    /// Moves the single selection up/down and scrolls to keep it visible (J/K).
-    private func moveSelection(by delta: Int, proxy: ScrollViewProxy) {
-        let list = displayedMessages
-        guard !list.isEmpty else { return }
-        let current = manager.selectedMessages.first.flatMap { id in
-            list.firstIndex { $0.id == id }
-        } ?? (delta > 0 ? -1 : list.count)
-        let next = max(0, min(list.count - 1, current + delta))
-        let id = list[next].id
-        manager.selectedMessages = [id]
-        proxy.scrollTo(id, anchor: .center)
     }
 }
 
@@ -267,7 +197,7 @@ struct MessageRow: View {
             }
         }
         .padding(.vertical, 6)
-        .padding(.horizontal, 4)
+        .padding(.horizontal, 8)
     }
 
     /// Time for today's messages, date for older ones (Mail/Spark style).
