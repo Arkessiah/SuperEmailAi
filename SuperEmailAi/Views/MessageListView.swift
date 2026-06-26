@@ -12,7 +12,7 @@ struct MessageListView: View {
     var displayedMessages: [MailMessage] {
         var list = manager.filteredMessages
         if let category {
-            list = list.filter { $0.category == category }
+            list = list.filter { manager.category(for: $0) == category }
         }
         if !searchText.isEmpty {
             let query = searchText.lowercased()

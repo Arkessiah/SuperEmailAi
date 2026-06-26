@@ -13,6 +13,7 @@ final class MailManager: ObservableObject {
     @Published var mailboxes: [String] = []
     @Published var accounts: [MailAccount] = []
     @Published var unreadByAccount: [String: Int] = [:]   // account name -> INBOX unread
+    @Published var newsletterSenders: Set<String> = []    // senders confirmed as newsletters (List-Unsubscribe)
 
     @Published var searchText: String = "" { didSet { applyFilters() } }
     @Published var selectedSender: SenderGroup? = nil
@@ -59,6 +60,23 @@ final class MailManager: ObservableObject {
 
     private let bridge = MailBridge.shared
     private let cache = MailCache.shared
+
+    init() {
+        newsletterSenders = Set(UserDefaults.standard.stringArray(forKey: "newsletterSenders") ?? [])
+    }
+
+    /// Smart-Inbox category for a message, refined by senders we've confirmed are
+    /// newsletters (via List-Unsubscribe) on top of the sender heuristic.
+    func category(for message: MailMessage) -> MailCategory {
+        if newsletterSenders.contains(message.senderAddress) { return .boletines }
+        return message.category
+    }
+
+    private func rememberNewsletter(_ senderAddress: String) {
+        guard !senderAddress.isEmpty, !newsletterSenders.contains(senderAddress) else { return }
+        newsletterSenders.insert(senderAddress)
+        UserDefaults.standard.set(Array(newsletterSenders), forKey: "newsletterSenders")
+    }
 
     // MARK: - Load messages
 
@@ -212,6 +230,9 @@ final class MailManager: ObservableObject {
             openedBody = raw.content
             openedHTML = MIMEParser.htmlBody(fromSource: raw.source)
             openedUnsubscribeURL = MIMEParser.listUnsubscribe(fromSource: raw.source).https
+            if openedUnsubscribeURL != nil {
+                rememberNewsletter(message.senderAddress)
+            }
         } catch {
             openedBody = "(No se pudo cargar el contenido: \(error.localizedDescription))"
         }
