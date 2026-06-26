@@ -537,6 +537,121 @@ final class MailManager: ObservableObject {
         isLoading = false
     }
 
+    // MARK: - Ask AI (rule-based natural-language cleanup, v1)
+
+    struct AIIntent {
+        var senderContains = ""
+        var olderThanDays: Int?
+        var unreadOnly = false
+        var readOnly = false
+
+        var isEmpty: Bool {
+            senderContains.isEmpty && olderThanDays == nil && !unreadOnly && !readOnly
+        }
+
+        /// Human-readable interpretation for the preview.
+        var summary: String {
+            var parts: [String] = []
+            if !senderContains.isEmpty { parts.append("de “\(senderContains)”") }
+            if let days = olderThanDays { parts.append("de más de \(days) días") }
+            if unreadOnly { parts.append("no leídos") }
+            if readOnly { parts.append("leídos") }
+            return parts.isEmpty ? "—" : parts.joined(separator: ", ")
+        }
+    }
+
+    /// Parses a free-text instruction into a cleanup intent (Spanish + English).
+    func parseAICommand(_ raw: String) -> AIIntent {
+        let text = raw.lowercased()
+        var intent = AIIntent()
+
+        let tokens = raw.components(separatedBy: CharacterSet(charactersIn: " \t\n,;\"'()"))
+        for token in tokens where token.contains("@") {
+            intent.senderContains = token.hasPrefix("@") ? String(token.dropFirst()) : token
+            break
+        }
+        if intent.senderContains.isEmpty {
+            let tlds = [".com", ".es", ".io", ".org", ".net", ".xyz", ".co", ".tech", ".dev", ".app", ".info", ".eu"]
+            for token in tokens where tlds.contains(where: { token.lowercased().contains($0) }) {
+                intent.senderContains = token
+                break
+            }
+        }
+
+        intent.olderThanDays = parseAge(from: text)
+
+        let unreadCues = ["no leído", "no leido", "no abierto", "sin leer", "sin abrir", "unread", "not read"]
+        let readCues = ["leídos", "leidos", "ya leídos", "abiertos", "ya abiertos", " read"]
+        if unreadCues.contains(where: text.contains) {
+            intent.unreadOnly = true
+        } else if readCues.contains(where: text.contains) {
+            intent.readOnly = true
+        }
+
+        return intent
+    }
+
+    private func parseAge(from text: String) -> Int? {
+        let normalized = text.replacingOccurrences(of: "ñ", with: "n")
+        let words = normalized.components(separatedBy: CharacterSet(charactersIn: " \t\n,;"))
+        func unitDays(_ w: String) -> Int? {
+            if w.hasPrefix("dia") || w.hasPrefix("day") { return 1 }
+            if w.hasPrefix("semana") || w.hasPrefix("week") { return 7 }
+            if w.hasPrefix("mes") || w.hasPrefix("month") { return 30 }
+            if w.hasPrefix("ano") || w.hasPrefix("year") { return 365 }
+            return nil
+        }
+        let ones = ["un", "una", "ultimo", "ultima", "el", "del", "last", "one", "a"]
+        for (i, word) in words.enumerated() {
+            guard let unit = unitDays(word) else { continue }
+            if i > 0, let n = Int(words[i - 1]) { return n * unit }
+            if i > 0, ones.contains(words[i - 1]) { return unit }
+            return unit
+        }
+        return nil
+    }
+
+    private func aiPredicate(_ intent: AIIntent) -> String {
+        var parts: [String] = []
+        let sender = intent.senderContains.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !sender.isEmpty { parts.append("sender contains \"\(escapeForAppleScript(sender))\"") }
+        if let days = intent.olderThanDays { parts.append("date received < ((current date) - (\(days) * days))") }
+        if intent.unreadOnly { parts.append("read status is false") }
+        if intent.readOnly { parts.append("read status is true") }
+        return parts.joined(separator: " and ")
+    }
+
+    func aiCount(_ intent: AIIntent) async -> Int {
+        guard !intent.isEmpty else { return 0 }
+        let pred = aiPredicate(intent)
+        var total = 0
+        for account in cleanupAccountNames() {
+            if let n = try? await bridge.bulkCount(mailbox: currentMailbox, account: account, predicate: pred), n > 0 {
+                total += n
+            }
+        }
+        return total
+    }
+
+    func aiExecute(_ intent: AIIntent) async {
+        guard !intent.isEmpty else { return }
+        let pred = aiPredicate(intent)
+        isLoading = true
+        statusMessage = "Aplicando instrucción…"
+        var total = 0
+        for account in cleanupAccountNames() {
+            if let n = try? await bridge.bulkDelete(mailbox: currentMailbox, account: account, predicate: pred) {
+                total += n
+            }
+        }
+        allMessages = []
+        buildSenderGroups()
+        applyFilters()
+        await refresh(limit: 1000, withProgress: false)
+        statusMessage = "\(total) correos movidos a la Papelera"
+        isLoading = false
+    }
+
     // MARK: - Bulk cleanup ("Llévame a cero")
 
     struct CleanupCriteria {

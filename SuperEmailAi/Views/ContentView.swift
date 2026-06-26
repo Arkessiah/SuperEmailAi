@@ -6,6 +6,7 @@ struct ContentView: View {
     @State private var showMoveSheet = false
     @State private var showCleanup = false
     @State private var showCommandPalette = false
+    @State private var showAskAI = false
     @State private var moveTarget: MoveTarget?
     @AppStorage("appAppearance") private var appearanceRaw = AppAppearance.dark.rawValue
 
@@ -19,6 +20,7 @@ struct ContentView: View {
                 Task { await manager.loadMessages() }
             },
             PaletteCommand(title: "Llévame a cero…", icon: "trash.slash") { showCleanup = true },
+            PaletteCommand(title: "Ask AI…", icon: "sparkles") { showAskAI = true },
             PaletteCommand(title: "Ver duplicados", icon: "doc.on.doc") {
                 manager.mode = .limpieza
                 manager.findDuplicates()
@@ -94,11 +96,11 @@ struct ContentView: View {
             }
             ToolbarItem(placement: .automatic) {
                 Button {
-                    // Placeholder for the future on-device AI assistant.
+                    showAskAI = true
                 } label: {
                     Label("Ask AI", systemImage: "sparkles")
                 }
-                .help("Asistente IA local (próximamente)")
+                .help("Limpieza por instrucción en lenguaje natural (local)")
             }
             ToolbarItem(placement: .automatic) {
                 Menu {
@@ -160,6 +162,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showCommandPalette) {
             CommandPaletteView(commands: paletteCommands)
+        }
+        .sheet(isPresented: $showAskAI) {
+            AskAIView()
         }
         .background(
             Button("") { showCommandPalette = true }
