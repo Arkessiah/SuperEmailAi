@@ -32,7 +32,11 @@ final class MailBridge {
                 repeat with i from 1 to msgCount
                     set msg to item i of theMessages
                     try
-                        set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, "\(account)", (message size of msg)}
+                        set msgSize to 0
+                        try
+                            set msgSize to message size of msg
+                        end try
+                        set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, "\(account)", msgSize}
                     end try
                 end repeat
                 return msgList
@@ -55,7 +59,11 @@ final class MailBridge {
                         if collected > \(limit - 1) then exit repeat
                         set msg to item i of theMessages
                         try
-                            set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, accName, (message size of msg)}
+                            set msgSize to 0
+                            try
+                                set msgSize to message size of msg
+                            end try
+                            set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, accName, msgSize}
                             set collected to collected + 1
                         end try
                     end repeat
@@ -88,7 +96,11 @@ final class MailBridge {
                 set theMessages to messages startI thru endI of theMailbox
                 repeat with msg in theMessages
                     try
-                        set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, "\(account)", (message size of msg)}
+                        set msgSize to 0
+                        try
+                            set msgSize to message size of msg
+                        end try
+                        set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, "\(account)", msgSize}
                     end try
                 end repeat
             end try
@@ -270,7 +282,11 @@ final class MailBridge {
                 end try
                 repeat with msg in theMessages
                     try
-                        set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, "\(account)", (message size of msg)}
+                        set msgSize to 0
+                        try
+                            set msgSize to message size of msg
+                        end try
+                        set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, "\(account)", msgSize}
                     end try
                 end repeat
                 return msgList
@@ -289,7 +305,11 @@ final class MailBridge {
                     end try
                     repeat with msg in theMessages
                         try
-                            set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, accName, (message size of msg)}
+                            set msgSize to 0
+                            try
+                                set msgSize to message size of msg
+                            end try
+                            set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, accName, msgSize}
                         end try
                     end repeat
                 end repeat
@@ -328,12 +348,16 @@ final class MailBridge {
 
     // MARK: - Fetch a single message's body (plain text + raw source for HTML)
 
-    func fetchMessageRaw(id: Int, mailbox: String, account: String? = nil) async throws -> (content: String, source: String) {
+    func fetchMessageRaw(id: Int, mailbox: String, account: String? = nil) async throws -> (content: String, source: String, recipients: [String]) {
         let accountFilter = account.map { "of account \"\($0)\"" } ?? ""
         let script = """
         tell application "Mail"
             set theMessage to (first message of mailbox "\(mailbox)" \(accountFilter) whose id is \(id))
-            return {content of theMessage, source of theMessage}
+            set recipList to {}
+            try
+                set recipList to (address of to recipients of theMessage)
+            end try
+            return {content of theMessage, source of theMessage, recipList}
         end tell
         """
 
@@ -341,7 +365,8 @@ final class MailBridge {
         let items = listItems(descriptor)
         let content = items.count > 0 ? (items[0].stringValue ?? "") : ""
         let source = items.count > 1 ? (items[1].stringValue ?? "") : ""
-        return (content: content, source: source)
+        let recipients = items.count > 2 ? listItems(items[2]).compactMap { $0.stringValue }.filter { !$0.isEmpty } : []
+        return (content: content, source: source, recipients: recipients)
     }
 
     // MARK: - AppleScript execution

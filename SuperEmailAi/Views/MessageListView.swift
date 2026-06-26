@@ -412,6 +412,13 @@ struct MessageDetailPane: View {
                     Text(msg.dateReceived.formatted(date: .abbreviated, time: .shortened))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    if !manager.openedRecipients.isEmpty {
+                        Text("Para: \(manager.openedRecipients.joined(separator: ", "))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .lineLimit(3)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)

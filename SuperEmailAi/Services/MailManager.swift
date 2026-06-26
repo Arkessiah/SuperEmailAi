@@ -45,6 +45,7 @@ final class MailManager: ObservableObject {
     @Published var openedMessage: MailMessage?
     @Published var openedBody: String = ""
     @Published var openedHTML: String?
+    @Published var openedRecipients: [String] = []
     @Published var openedUnsubscribeURL: URL?
     @Published var isLoadingBody = false
     @Published var showRemoteImages = false   // per-message opt-in to remote content
@@ -353,6 +354,7 @@ final class MailManager: ObservableObject {
         openedMessage = message
         openedBody = ""
         openedHTML = nil
+        openedRecipients = []
         openedUnsubscribeURL = nil
         showRemoteImages = false
         isLoadingBody = true
@@ -364,6 +366,7 @@ final class MailManager: ObservableObject {
                 account: account
             )
             openedBody = raw.content
+            openedRecipients = raw.recipients
             openedHTML = MIMEParser.htmlBody(fromSource: raw.source)
             openedUnsubscribeURL = MIMEParser.listUnsubscribe(fromSource: raw.source).https
             if openedUnsubscribeURL != nil {
