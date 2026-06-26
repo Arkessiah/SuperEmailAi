@@ -69,6 +69,50 @@ final class MailManager: ObservableObject {
         importantSenders = Set(UserDefaults.standard.stringArray(forKey: "importantSenders") ?? [])
     }
 
+    // MARK: - Alerts (incoming-mail monitor for important senders)
+
+    @Published var alerts: [MailMessage] = []
+    private var seenAlertIDs: Set<String> = []
+    private var alertsTask: Task<Void, Never>?
+
+    /// Starts polling INBOX for new mail from important senders (in-app alerts).
+    func startAlertsMonitor() {
+        guard alertsTask == nil else { return }
+        alertsTask = Task { [weak self] in
+            await self?.baselineSeenIDs()
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 120 * 1_000_000_000)   // 2 min
+                if Task.isCancelled { break }
+                await self?.checkForAlerts()
+            }
+        }
+    }
+
+    private func baselineSeenIDs() async {
+        for account in accounts {
+            if let recent = try? await bridge.fetchMessages(from: "INBOX", account: account.name, limit: 30) {
+                for m in recent { seenAlertIDs.insert(m.id) }
+            }
+        }
+    }
+
+    private func checkForAlerts() async {
+        guard !importantSenders.isEmpty else { return }
+        for account in accounts {
+            guard let recent = try? await bridge.fetchMessages(from: "INBOX", account: account.name, limit: 15) else { continue }
+            for m in recent where !seenAlertIDs.contains(m.id) {
+                seenAlertIDs.insert(m.id)
+                if importantSenders.contains(m.senderAddress) {
+                    alerts.insert(m, at: 0)
+                }
+            }
+        }
+        if alerts.count > 50 { alerts = Array(alerts.prefix(50)) }
+    }
+
+    func dismissAlert(_ id: String) { alerts.removeAll { $0.id == id } }
+    func clearAlerts() { alerts.removeAll() }
+
     /// Toggles a sender's "important" score (used by the sort-by-importance view).
     func toggleImportant(_ senderAddress: String) {
         guard !senderAddress.isEmpty else { return }

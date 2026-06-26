@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var showCleanup = false
     @State private var showCommandPalette = false
     @State private var showAskAI = false
+    @State private var showAlerts = false
     @State private var moveTarget: MoveTarget?
     @AppStorage("appAppearance") private var appearanceRaw = AppAppearance.dark.rawValue
 
@@ -105,6 +106,18 @@ struct ContentView: View {
                 .help("Limpieza por instrucción en lenguaje natural (local)")
             }
             ToolbarItem(placement: .automatic) {
+                Button {
+                    showAlerts.toggle()
+                } label: {
+                    Image(systemName: manager.alerts.isEmpty ? "bell" : "bell.badge.fill")
+                        .symbolRenderingMode(manager.alerts.isEmpty ? .monochrome : .multicolor)
+                }
+                .help("Alertas de remitentes importantes")
+                .popover(isPresented: $showAlerts, arrowEdge: .bottom) {
+                    AlertsView()
+                }
+            }
+            ToolbarItem(placement: .automatic) {
                 Menu {
                     Picker("Apariencia", selection: $appearanceRaw) {
                         ForEach(AppAppearance.allCases) { a in
@@ -179,6 +192,7 @@ struct ContentView: View {
         .task {
             manager.showCachedInstantly()
             await manager.loadAccounts()
+            manager.startAlertsMonitor()
             await manager.loadMessages()
             await manager.prefetchAllMailboxes()
         }
