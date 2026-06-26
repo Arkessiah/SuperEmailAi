@@ -44,14 +44,16 @@ struct ContentView: View {
         NavigationSplitView {
             Group {
                 switch manager.mode {
-                case .lectura:
+                case .inicio, .lectura:
                     MailboxSidebarView()
                 case .limpieza:
                     SidebarView(showDuplicates: $showDuplicates)
                 }
             }
         } detail: {
-            if manager.mode == .limpieza && showDuplicates {
+            if manager.mode == .inicio {
+                HomeView()
+            } else if manager.mode == .limpieza && showDuplicates {
                 DuplicatesView()
             } else {
                 MessageListView(

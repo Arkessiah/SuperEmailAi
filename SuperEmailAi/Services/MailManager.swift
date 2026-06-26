@@ -45,6 +45,7 @@ final class MailManager: ObservableObject {
     @Published var mode: AppMode = .lectura
 
     enum AppMode: String, CaseIterable {
+        case inicio = "Inicio"
         case lectura = "Lectura"
         case limpieza = "Limpieza"
     }
