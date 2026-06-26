@@ -12,6 +12,39 @@ enum MIMEParser {
         return html.contains("<") ? html : nil
     }
 
+    /// Extracts the `List-Unsubscribe` header (the https URL and/or mailto), used
+    /// to offer a one-click unsubscribe. Returns the first https URL and mailto found.
+    static func listUnsubscribe(fromSource source: String) -> (https: URL?, mailto: String?) {
+        let normalized = source.replacingOccurrences(of: "\r\n", with: "\n")
+        guard let headerRange = normalized.range(of: "List-Unsubscribe:", options: .caseInsensitive) else {
+            return (nil, nil)
+        }
+
+        // Collect the header value, including folded continuation lines.
+        let lines = normalized[headerRange.upperBound...].components(separatedBy: "\n")
+        var value = lines.first ?? ""
+        var i = 1
+        while i < lines.count, let first = lines[i].first, first == " " || first == "\t" {
+            value += lines[i]
+            i += 1
+        }
+
+        var https: URL?
+        var mailto: String?
+        var rest = Substring(value)
+        while let lt = rest.firstIndex(of: "<"), let gt = rest[lt...].firstIndex(of: ">") {
+            let token = String(rest[rest.index(after: lt)..<gt]).trimmingCharacters(in: .whitespaces)
+            let lower = token.lowercased()
+            if lower.hasPrefix("http"), https == nil {
+                https = URL(string: token)
+            } else if lower.hasPrefix("mailto:"), mailto == nil {
+                mailto = String(token.dropFirst("mailto:".count))
+            }
+            rest = rest[rest.index(after: gt)...]
+        }
+        return (https, mailto)
+    }
+
     /// Recursively walks MIME parts (handles nested multipart) and returns the
     /// last text/html leaf found, decoded. Recursion is bounded: it only recurses
     /// when the boundary actually splits the block into strictly smaller pieces,

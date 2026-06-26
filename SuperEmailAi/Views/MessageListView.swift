@@ -409,6 +409,31 @@ struct MessageDetailPane: View {
 
             Divider()
 
+            if manager.openedUnsubscribeURL != nil {
+                HStack(spacing: 8) {
+                    Image(systemName: "nosign").foregroundStyle(.orange)
+                    Text("Boletín")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button { manager.unsubscribeFromOpened() } label: {
+                        Label("Desuscribir", systemImage: "hand.raised").font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    Button(role: .destructive) {
+                        Task { await manager.deleteAllFromOpenedSender() }
+                    } label: {
+                        Label("Borrar todos de este remitente", systemImage: "trash").font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(.orange.opacity(0.08))
+                Divider()
+            }
+
             if let msg = manager.openedMessage {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(msg.subject)

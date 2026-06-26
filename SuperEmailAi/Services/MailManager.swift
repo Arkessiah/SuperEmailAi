@@ -36,6 +36,7 @@ final class MailManager: ObservableObject {
     @Published var openedMessage: MailMessage?
     @Published var openedBody: String = ""
     @Published var openedHTML: String?
+    @Published var openedUnsubscribeURL: URL?
     @Published var isLoadingBody = false
     @Published var showRemoteImages = false   // per-message opt-in to remote content
 
@@ -198,6 +199,7 @@ final class MailManager: ObservableObject {
         openedMessage = message
         openedBody = ""
         openedHTML = nil
+        openedUnsubscribeURL = nil
         showRemoteImages = false
         isLoadingBody = true
         do {
@@ -209,6 +211,7 @@ final class MailManager: ObservableObject {
             )
             openedBody = raw.content
             openedHTML = MIMEParser.htmlBody(fromSource: raw.source)
+            openedUnsubscribeURL = MIMEParser.listUnsubscribe(fromSource: raw.source).https
         } catch {
             openedBody = "(No se pudo cargar el contenido: \(error.localizedDescription))"
         }
@@ -476,6 +479,29 @@ final class MailManager: ObservableObject {
     /// Archives the current selection (moves to the "Archive" mailbox).
     func archiveSelection() async {
         await moveSelectedMessages(to: "Archive")
+    }
+
+    /// Opens the open message's unsubscribe link in the browser.
+    func unsubscribeFromOpened() {
+        guard let url = openedUnsubscribeURL else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Deletes every message from the open message's sender in its mailbox.
+    func deleteAllFromOpenedSender() async {
+        guard let msg = openedMessage, !msg.senderAddress.isEmpty,
+              !msg.account.isEmpty else { return }
+        isLoading = true
+        statusMessage = "Eliminando todos los correos de \(msg.senderAddress)…"
+        let predicate = "sender contains \"\(escapeForAppleScript(msg.senderAddress))\""
+        let total = (try? await bridge.bulkDelete(mailbox: msg.mailbox, account: msg.account, predicate: predicate)) ?? 0
+        allMessages.removeAll { $0.senderAddress == msg.senderAddress }
+        buildSenderGroups()
+        applyFilters()
+        cache.update(allMessages, account: currentAccount, mailbox: currentMailbox)
+        statusMessage = "\(total) correos de \(msg.senderAddress) eliminados"
+        closeReading()
+        isLoading = false
     }
 
     // MARK: - Bulk cleanup ("Llévame a cero")
