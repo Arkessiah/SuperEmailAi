@@ -90,3 +90,6 @@ BCK/
 # ===========================
 *.log
 *.tmp
+
+# Design assets (local only)
+*.webp
