@@ -26,6 +26,17 @@ struct MessageListView: View {
         return list
     }
 
+    /// The selected messages resolved to objects, from both the shown list (which
+    /// may be index-backed search results) and the loaded set — so bulk actions
+    /// act on everything selected, not only what's in `allMessages`.
+    var selectedMessageObjects: [MailMessage] {
+        let ids = manager.selectedMessages
+        var byId: [String: MailMessage] = [:]
+        for m in displayedMessages where ids.contains(m.id) { byId[m.id] = m }
+        for m in manager.allMessages where ids.contains(m.id) { byId[m.id] = m }
+        return Array(byId.values)
+    }
+
     var body: some View {
         Group {
             if manager.isReadingOpen {
@@ -97,6 +108,7 @@ struct MessageListView: View {
 
                 if !manager.selectedMessages.isEmpty {
                     BulkActionButtons(
+                        selectedObjects: selectedMessageObjects,
                         showMoveSheet: $showMoveSheet,
                         moveTarget: $moveTarget,
                         showDeleteConfirmation: $showDeleteConfirmation,
@@ -119,13 +131,16 @@ struct MessageListView: View {
                 .help("Ordenar por fecha, importancia del remitente o tamaño")
 
                 Button {
-                    if manager.selectedMessages.count == displayedMessages.count {
+                    let shown = Set(displayedMessages.map(\.id))
+                    if manager.selectedMessages == shown {
                         manager.deselectAll()
                     } else {
-                        manager.selectAll()
+                        // Select exactly what's on screen (search results, bucket,
+                        // or local-filtered list) — not just the loaded view.
+                        manager.selectedMessages = shown
                     }
                 } label: {
-                    Text(manager.selectedMessages.count == displayedMessages.count ? "Deseleccionar" : "Seleccionar todo")
+                    Text(!displayedMessages.isEmpty && displayedMessages.allSatisfy { manager.selectedMessages.contains($0.id) } ? "Deseleccionar" : "Seleccionar todo")
                         .font(.caption)
                 }
                 .buttonStyle(.bordered)
@@ -172,7 +187,7 @@ struct MessageListView: View {
                     onToggleImportant: { manager.toggleImportant($0.senderAddress) },
                     onDelete: {
                         if !manager.selectedMessages.isEmpty {
-                            messagesToDelete = manager.allMessages.filter { manager.selectedMessages.contains($0.id) }
+                            messagesToDelete = selectedMessageObjects
                             showDeleteConfirmation = true
                         }
                     },
@@ -307,6 +322,7 @@ struct SenderHeader: View {
 
 struct BulkActionButtons: View {
     @EnvironmentObject var manager: MailManager
+    let selectedObjects: [MailMessage]
     @Binding var showMoveSheet: Bool
     @Binding var moveTarget: ContentView.MoveTarget?
     @Binding var showDeleteConfirmation: Bool
@@ -319,7 +335,7 @@ struct BulkActionButtons: View {
                 .foregroundStyle(.blue)
 
             Button(role: .destructive) {
-                messagesToDelete = manager.allMessages.filter { manager.selectedMessages.contains($0.id) }
+                messagesToDelete = selectedObjects
                 showDeleteConfirmation = true
             } label: {
                 Label("Eliminar", systemImage: "trash")

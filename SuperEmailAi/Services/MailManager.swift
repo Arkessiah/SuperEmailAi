@@ -89,6 +89,14 @@ final class MailManager: ObservableObject {
     }
     private let store = MessageStore.shared   // Phase 1: SQLite index (write in parallel)
 
+    /// IDs deleted/moved this session. Mail's IMAP deletion is slow, so a refresh
+    /// can still return them — we tombstone them so they don't reappear in the
+    /// list or get re-indexed before Mail commits the removal.
+    private var deletedIds: Set<String> = []
+    private func excludingDeleted(_ msgs: [MailMessage]) -> [MailMessage] {
+        deletedIds.isEmpty ? msgs : msgs.filter { !deletedIds.contains($0.id) }
+    }
+
     init() {
         newsletterSenders = Set(UserDefaults.standard.stringArray(forKey: "newsletterSenders") ?? [])
         importantSenders = Set(UserDefaults.standard.stringArray(forKey: "importantSenders") ?? [])
@@ -277,7 +285,8 @@ final class MailManager: ObservableObject {
     /// so messages appear progressively and `loadProgress` reflects real progress.
     private func refresh(limit: Int, withProgress: Bool) async {
         if let account = currentAccount {
-            if let fresh = try? await bridge.fetchMessages(from: currentMailbox, account: account, limit: limit) {
+            if let raw = try? await bridge.fetchMessages(from: currentMailbox, account: account, limit: limit) {
+                let fresh = excludingDeleted(raw)
                 if currentMailbox == "INBOX" {
                     unreadByAccount[account] = fresh.filter { !$0.isRead }.count
                 }
@@ -298,7 +307,8 @@ final class MailManager: ObservableObject {
         let perAccount = 120
         var collected: [MailMessage] = []
         for (index, account) in targets.enumerated() {
-            if let fresh = try? await bridge.fetchMessages(from: currentMailbox, account: account.name, limit: perAccount) {
+            if let raw = try? await bridge.fetchMessages(from: currentMailbox, account: account.name, limit: perAccount) {
+                let fresh = excludingDeleted(raw)
                 collected.append(contentsOf: fresh)
                 store.upsert(fresh)
                 if currentMailbox == "INBOX" {
@@ -327,7 +337,8 @@ final class MailManager: ObservableObject {
     /// Merges freshly-fetched messages into `allMessages` without collapsing the
     /// list: updates existing entries in place (read status, size) and appends
     /// genuinely new ones, preserving order. Prevents the refresh flicker.
-    private func mergeFresh(_ fresh: [MailMessage]) {
+    private func mergeFresh(_ rawFresh: [MailMessage]) {
+        let fresh = excludingDeleted(rawFresh)
         guard !fresh.isEmpty else { return }
         let freshByID = Dictionary(fresh.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let existingIDs = Set(allMessages.map(\.id))
@@ -351,7 +362,7 @@ final class MailManager: ObservableObject {
             if let more = try? await bridge.fetchMessagesRange(
                 mailbox: currentMailbox, account: accName, offset: alreadyLoaded, limit: pageSize
             ) {
-                newMessages.append(contentsOf: more.filter { !existing.contains($0.id) })
+                newMessages.append(contentsOf: excludingDeleted(more).filter { !existing.contains($0.id) })
             }
         }
 
@@ -472,7 +483,8 @@ final class MailManager: ObservableObject {
         for account in accounts {
             if Task.isCancelled { return }
             if account.name == currentAccount && mailbox == currentMailbox { continue }
-            if let fresh = try? await bridge.fetchMessages(from: mailbox, account: account.name, limit: perMailbox) {
+            if let raw = try? await bridge.fetchMessages(from: mailbox, account: account.name, limit: perMailbox) {
+                let fresh = excludingDeleted(raw)
                 store.upsert(fresh)
                 unreadByAccount[account.name] = fresh.filter { !$0.isRead }.count
             }
@@ -614,6 +626,7 @@ final class MailManager: ObservableObject {
         guard !messages.isEmpty else { return }
 
         let removedIds = Set(messages.map(\.id))
+        deletedIds.formUnion(removedIds)
         allMessages.removeAll { removedIds.contains($0.id) }
         selectedMessages.subtract(removedIds)
         buildSenderGroups()
@@ -655,6 +668,7 @@ final class MailManager: ObservableObject {
         do {
             let count = try await bridgeMove(toMove, to: targetMailbox)
             statusMessage = "\(count) correos movidos a \(targetMailbox)"
+            deletedIds.formUnion(toMove.map(\.id))
             allMessages.removeAll { selectedMessages.contains($0.id) }
             selectedMessages.removeAll()
             buildSenderGroups()
@@ -675,6 +689,7 @@ final class MailManager: ObservableObject {
             let count = try await bridgeMove(sender.messages, to: targetMailbox)
             statusMessage = "\(count) correos movidos"
             let idsToRemove = Set(sender.messages.map(\.id))
+            deletedIds.formUnion(idsToRemove)
             allMessages.removeAll { idsToRemove.contains($0.id) }
             buildSenderGroups()
             applyFilters()
