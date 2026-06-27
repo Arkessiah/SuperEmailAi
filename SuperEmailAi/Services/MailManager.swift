@@ -71,7 +71,22 @@ final class MailManager: ObservableObject {
     }
 
     private let bridge = MailBridge.shared
-    private let cache = MailCache.shared
+    // Accounts are persisted in UserDefaults (small); messages live in the SQLite
+    // index (MessageStore). The old JSON message cache (MailCache) was retired.
+    private let accountsKey = "cachedAccounts"
+    private var cachedAccounts: [MailAccount] {
+        get {
+            guard let data = UserDefaults.standard.data(forKey: accountsKey),
+                  let decoded = try? JSONDecoder().decode([MailAccount].self, from: data)
+            else { return [] }
+            return decoded
+        }
+        set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                UserDefaults.standard.set(data, forKey: accountsKey)
+            }
+        }
+    }
     private let store = MessageStore.shared   // Phase 1: SQLite index (write in parallel)
 
     init() {
@@ -215,15 +230,17 @@ final class MailManager: ObservableObject {
     /// Populates the UI from the cache synchronously (instant, no Mail.app round-trip).
     /// Used on launch so the last messages show immediately before refreshing.
     func showCachedInstantly() {
-        if !cache.accounts.isEmpty {
-            accounts = cache.accounts
+        let saved = cachedAccounts
+        if !saved.isEmpty {
+            accounts = saved
             rebuildMailboxList()
         }
-        if let cached = cache.messages(account: currentAccount, mailbox: currentMailbox), !cached.isEmpty {
-            allMessages = cached
+        let indexed = store.recent(account: currentAccount, mailbox: currentMailbox, limit: 1000)
+        if !indexed.isEmpty {
+            allMessages = indexed
             buildSenderGroups()
             applyFilters()
-            statusMessage = "\(cached.count) en caché · actualizando…"
+            statusMessage = "\(indexed.count) en índice · actualizando…"
         }
     }
 
@@ -234,16 +251,13 @@ final class MailManager: ObservableObject {
         errorMessage = nil
         canLoadMore = true
 
-        // Instant display from the SQLite index (falls back to the JSON cache).
+        // Instant display from the SQLite index.
         let indexed = store.recent(account: currentAccount, mailbox: currentMailbox, limit: 1000)
-        let cached = indexed.isEmpty
-            ? (cache.messages(account: currentAccount, mailbox: currentMailbox) ?? [])
-            : indexed
-        if !cached.isEmpty {
-            allMessages = cached
+        if !indexed.isEmpty {
+            allMessages = indexed
             buildSenderGroups()
             applyFilters()
-            statusMessage = "\(cached.count) en índice · actualizando…"
+            statusMessage = "\(indexed.count) en índice · actualizando…"
             isRefreshing = true
             isLoading = false
             await refresh(limit: limit, withProgress: false)
@@ -270,7 +284,6 @@ final class MailManager: ObservableObject {
                 if withProgress { allMessages = fresh } else { mergeFresh(fresh) }
                 buildSenderGroups()
                 applyFilters()
-                cache.update(allMessages, account: account, mailbox: currentMailbox)
                 store.upsert(fresh)
                 statusMessage = "\(allMessages.count) correos"
             } else if allMessages.isEmpty {
@@ -308,7 +321,6 @@ final class MailManager: ObservableObject {
         if withProgress { allMessages = collected } else { mergeFresh(collected) }
         buildSenderGroups()
         applyFilters()
-        cache.update(allMessages, account: nil, mailbox: currentMailbox)
         statusMessage = "\(allMessages.count) correos"
     }
 
@@ -349,7 +361,6 @@ final class MailManager: ObservableObject {
             allMessages.append(contentsOf: newMessages)
             buildSenderGroups()
             applyFilters()
-            cache.update(allMessages, account: currentAccount, mailbox: currentMailbox)
             store.upsert(newMessages)
             statusMessage = "\(allMessages.count) correos"
         }
@@ -408,7 +419,7 @@ final class MailManager: ObservableObject {
                 allMessages[index] = allMessages[index].with(isRead: true)
                 buildSenderGroups()
                 applyFilters()
-                cache.update(allMessages, account: currentAccount, mailbox: currentMailbox)
+                store.upsert([allMessages[index]])
             }
         }
     }
@@ -416,15 +427,18 @@ final class MailManager: ObservableObject {
     // MARK: - Accounts
 
     func loadAccounts() async {
-        if accounts.isEmpty, !cache.accounts.isEmpty {
-            accounts = cache.accounts
-            rebuildMailboxList()
+        if accounts.isEmpty {
+            let saved = cachedAccounts
+            if !saved.isEmpty {
+                accounts = saved
+                rebuildMailboxList()
+            }
         }
         do {
             let fresh = try await bridge.fetchAccounts()
                 .map { MailAccount(name: $0.name, mailboxes: $0.mailboxes) }
             accounts = fresh
-            cache.setAccounts(fresh)
+            cachedAccounts = fresh
         } catch {
             // Keep cached/previous accounts on failure.
         }
@@ -459,7 +473,6 @@ final class MailManager: ObservableObject {
             if Task.isCancelled { return }
             if account.name == currentAccount && mailbox == currentMailbox { continue }
             if let fresh = try? await bridge.fetchMessages(from: mailbox, account: account.name, limit: perMailbox) {
-                cache.update(fresh, account: account.name, mailbox: mailbox)
                 store.upsert(fresh)
                 unreadByAccount[account.name] = fresh.filter { !$0.isRead }.count
             }
@@ -606,7 +619,7 @@ final class MailManager: ObservableObject {
         buildSenderGroups()
         applyFilters()
         findDuplicates()
-        cache.update(allMessages, account: currentAccount, mailbox: currentMailbox)
+        store.delete(ids: Array(removedIds))
         statusMessage = "Eliminando \(messages.count) \(noun) en segundo plano..."
 
         do {
@@ -646,7 +659,7 @@ final class MailManager: ObservableObject {
             selectedMessages.removeAll()
             buildSenderGroups()
             applyFilters()
-            cache.update(allMessages, account: currentAccount, mailbox: currentMailbox)
+            store.delete(ids: toMove.map(\.id))
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -665,7 +678,7 @@ final class MailManager: ObservableObject {
             allMessages.removeAll { idsToRemove.contains($0.id) }
             buildSenderGroups()
             applyFilters()
-            cache.update(allMessages, account: currentAccount, mailbox: currentMailbox)
+            store.delete(ids: Array(idsToRemove))
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -716,7 +729,7 @@ final class MailManager: ObservableObject {
         allMessages = allMessages.map { ids.contains($0.id) ? $0.with(isRead: markRead) : $0 }
         buildSenderGroups()
         applyFilters()
-        cache.update(allMessages, account: currentAccount, mailbox: currentMailbox)
+        store.upsert(allMessages.filter { ids.contains($0.id) })
         statusMessage = markRead ? "Marcados como leídos" : "Marcados como no leídos"
     }
 
@@ -742,7 +755,7 @@ final class MailManager: ObservableObject {
         allMessages.removeAll { $0.senderAddress == msg.senderAddress }
         buildSenderGroups()
         applyFilters()
-        cache.update(allMessages, account: currentAccount, mailbox: currentMailbox)
+        store.deleteBySender(address: msg.senderAddress, account: msg.account, mailbox: msg.mailbox)
         statusMessage = "\(total) correos de \(msg.senderAddress) eliminados"
         closeReading()
         isLoading = false
@@ -854,11 +867,15 @@ final class MailManager: ObservableObject {
             if let n = try? await bridge.bulkDelete(mailbox: currentMailbox, account: account, predicate: pred) {
                 total += n
             }
+            // Drop the index for this view so the predicate-deleted mail can't
+            // linger as ghosts; refresh + backfill re-sync from Mail's new state.
+            store.clearMailbox(account: account, mailbox: currentMailbox)
         }
         allMessages = []
         buildSenderGroups()
         applyFilters()
         await refresh(limit: 1000, withProgress: false)
+        startBackfill()
         statusMessage = "\(total) correos movidos a la Papelera"
         isLoading = false
     }
@@ -919,12 +936,16 @@ final class MailManager: ObservableObject {
             if let n = try? await bridge.bulkDelete(mailbox: currentMailbox, account: account, predicate: pred) {
                 total += n
             }
+            // Drop the index for this view so predicate-deleted mail can't linger
+            // as ghosts; refresh + backfill re-sync from Mail's new state.
+            store.clearMailbox(account: account, mailbox: currentMailbox)
         }
 
         allMessages = []
         buildSenderGroups()
         applyFilters()
         await refresh(limit: 1000, withProgress: false)
+        startBackfill()
         statusMessage = "\(total) correos movidos a la Papelera"
         isLoading = false
     }

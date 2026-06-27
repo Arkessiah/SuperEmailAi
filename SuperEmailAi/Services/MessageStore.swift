@@ -124,6 +124,46 @@ final class MessageStore {
         return (try? dbQueue.read { db in try MessageRecord.fetchCount(db) }) ?? 0
     }
 
+    // MARK: - Deletions (keep the index in sync with Mail)
+
+    /// Removes messages by primary key (exact deletes / moves). FTS stays in sync
+    /// via the synchronized triggers.
+    func delete(ids: [String]) {
+        guard let dbQueue, !ids.isEmpty else { return }
+        DispatchQueue.global(qos: .utility).async {
+            try? dbQueue.write { db in _ = try MessageRecord.deleteAll(db, keys: ids) }
+        }
+    }
+
+    /// Removes every indexed message from a given sender in a mailbox (used by
+    /// "delete all from this sender").
+    func deleteBySender(address: String, account: String, mailbox: String) {
+        guard let dbQueue, !address.isEmpty else { return }
+        DispatchQueue.global(qos: .utility).async {
+            try? dbQueue.write { db in
+                try db.execute(
+                    sql: "DELETE FROM message WHERE senderAddress = ? AND account = ? AND mailbox = ?",
+                    arguments: [address, account, mailbox]
+                )
+            }
+        }
+    }
+
+    /// Drops the whole index for a view and resets its backfill cursor, so a
+    /// predicate-based bulk cleanup re-syncs from Mail's current state (never
+    /// leaves ghost rows). Refresh + backfill re-populate it.
+    func clearMailbox(account: String, mailbox: String) {
+        guard let dbQueue else { return }
+        DispatchQueue.global(qos: .utility).async {
+            try? dbQueue.write { db in
+                try db.execute(sql: "DELETE FROM message WHERE account = ? AND mailbox = ?",
+                               arguments: [account, mailbox])
+                try db.execute(sql: "DELETE FROM sync_state WHERE key = ?",
+                               arguments: ["\(account)|\(mailbox)"])
+            }
+        }
+    }
+
     // MARK: - Backfill cursor (per account|mailbox)
 
     /// Where the historical backfill for a view has reached, and whether it's done.
