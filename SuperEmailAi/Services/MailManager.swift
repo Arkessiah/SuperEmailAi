@@ -483,13 +483,23 @@ final class MailManager: ObservableObject {
         for account in targets {
             var (offset, done) = store.backfillCursor(account: account.name, mailbox: mailbox)
             if done { continue }
+            var emptyRetries = 0
             while !Task.isCancelled {
-                guard let page = try? await bridge.fetchMessagesRange(
+                let page = (try? await bridge.fetchMessagesRange(
                     mailbox: mailbox, account: account.name, offset: offset, limit: pageSize
-                ), !page.isEmpty else {
+                )) ?? []
+                if page.isEmpty {
+                    // Could be a transient AppleScript hiccup rather than the real
+                    // end — retry once before declaring this account done.
+                    if emptyRetries < 1 {
+                        emptyRetries += 1
+                        try? await Task.sleep(nanoseconds: 800_000_000)
+                        continue
+                    }
                     store.setBackfillCursor(account: account.name, mailbox: mailbox, offset: offset, done: true)
                     break
                 }
+                emptyRetries = 0
                 store.upsert(page)
                 offset += page.count
                 let reachedEnd = page.count < pageSize

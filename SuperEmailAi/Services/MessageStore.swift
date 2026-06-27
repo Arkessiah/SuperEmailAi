@@ -98,6 +98,12 @@ final class MessageStore {
                 t.column("done", .boolean).notNull().defaults(to: false)
             }
         }
+        // One-time reset: the first backfill ran with concurrent AppleScript and
+        // wrongly marked accounts "done" on transient empty pages. Clear so the
+        // serialized version re-walks the full history.
+        migrator.registerMigration("sync_state_reset_v2") { db in
+            try db.execute(sql: "DELETE FROM sync_state")
+        }
         return migrator
     }
 

@@ -371,10 +371,14 @@ final class MailBridge {
 
     // MARK: - AppleScript execution
 
+    /// Serial queue: Mail Apple events must not run concurrently, or overlapping
+    /// scripts (refresh + backfill + prefetch) fail intermittently and return empty.
+    private static let scriptQueue = DispatchQueue(label: "com.superemailai.applescript", qos: .userInitiated)
+
     /// Runs the script and returns the raw `NSAppleEventDescriptor` result.
     private func runAppleScript(_ source: String) async throws -> NSAppleEventDescriptor {
         return try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            Self.scriptQueue.async {
                 var error: NSDictionary?
                 guard let script = NSAppleScript(source: source) else {
                     continuation.resume(throwing: MailBridgeError.scriptError("No se pudo compilar el AppleScript"))
