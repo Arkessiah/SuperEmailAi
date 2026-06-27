@@ -34,6 +34,7 @@ final class MailManager: ObservableObject {
     @Published var canLoadMore = true
     @Published var loadProgress: Double?     // 0...1 during a first (no-cache) load
     @Published var statusMessage = "Listo"
+    @Published var backfillStatus: String?   // shown while indexing history in the background
     @Published var errorMessage: String?
 
     @Published var currentMailbox: String = "INBOX"
@@ -463,6 +464,44 @@ final class MailManager: ObservableObject {
                 unreadByAccount[account.name] = fresh.filter { !$0.isRead }.count
             }
         }
+    }
+
+    // MARK: - Historical backfill (Phase 4)
+
+    private var backfillTask: Task<Void, Never>?
+
+    /// Indexes ALL historical mail (oldest beyond the loaded window) in the
+    /// background, page by page, so search/load eventually cover everything.
+    /// Resumes from a persisted cursor per account; gentle on Mail.app.
+    func startBackfill() {
+        guard backfillTask == nil else { return }
+        backfillTask = Task { [weak self] in await self?.runBackfill() }
+    }
+
+    private func runBackfill(mailbox: String = "INBOX", pageSize: Int = 200) async {
+        let targets = currentAccount.map { name in accounts.filter { $0.name == name } } ?? accounts
+        for account in targets {
+            var (offset, done) = store.backfillCursor(account: account.name, mailbox: mailbox)
+            if done { continue }
+            while !Task.isCancelled {
+                guard let page = try? await bridge.fetchMessagesRange(
+                    mailbox: mailbox, account: account.name, offset: offset, limit: pageSize
+                ), !page.isEmpty else {
+                    store.setBackfillCursor(account: account.name, mailbox: mailbox, offset: offset, done: true)
+                    break
+                }
+                store.upsert(page)
+                offset += page.count
+                let reachedEnd = page.count < pageSize
+                store.setBackfillCursor(account: account.name, mailbox: mailbox, offset: offset, done: reachedEnd)
+                backfillStatus = "Indexando histórico… \(store.count()) en índice"
+                if reachedEnd { break }
+                try? await Task.sleep(nanoseconds: 400_000_000)   // 0.4s gentle pause
+            }
+            if Task.isCancelled { break }
+        }
+        backfillStatus = nil
+        backfillTask = nil
     }
 
     /// Selects an account (nil = all accounts), refreshes its mailboxes and reloads.

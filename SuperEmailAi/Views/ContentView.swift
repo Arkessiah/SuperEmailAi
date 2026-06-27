@@ -196,6 +196,7 @@ struct ContentView: View {
             await manager.loadAccounts()
             manager.startAlertsMonitor()
             await manager.loadMessages()
+            manager.startBackfill()
             await manager.prefetchAllMailboxes()
         }
         .onChange(of: manager.mode) { _, newMode in
@@ -225,6 +226,15 @@ struct StatusBar: View {
                 Text(manager.statusMessage)
             }
             Spacer()
+            if let backfill = manager.backfillStatus {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.7)
+                Text(backfill)
+                    .foregroundStyle(.secondary)
+                Text("·")
+                    .foregroundStyle(.secondary)
+            }
             Text("\(manager.allMessages.count) correos | \(manager.senderGroups.count) remitentes")
                 .foregroundStyle(.secondary)
             if !manager.selectedMessages.isEmpty {

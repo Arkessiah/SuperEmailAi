@@ -91,6 +91,13 @@ final class MessageStore {
                 t.tokenizer = .unicode61()
             }
         }
+        migrator.registerMigration("sync_state") { db in
+            try db.create(table: "sync_state") { t in
+                t.column("key", .text).primaryKey()          // "account|mailbox"
+                t.column("backfillOffset", .integer).notNull().defaults(to: 0)
+                t.column("done", .boolean).notNull().defaults(to: false)
+            }
+        }
         return migrator
     }
 
@@ -109,6 +116,35 @@ final class MessageStore {
     func count() -> Int {
         guard let dbQueue else { return 0 }
         return (try? dbQueue.read { db in try MessageRecord.fetchCount(db) }) ?? 0
+    }
+
+    // MARK: - Backfill cursor (per account|mailbox)
+
+    /// Where the historical backfill for a view has reached, and whether it's done.
+    func backfillCursor(account: String, mailbox: String) -> (offset: Int, done: Bool) {
+        guard let dbQueue else { return (0, false) }
+        let key = "\(account)|\(mailbox)"
+        return (try? dbQueue.read { db -> (Int, Bool) in
+            guard let row = try Row.fetchOne(
+                db, sql: "SELECT backfillOffset, done FROM sync_state WHERE key = ?", arguments: [key]
+            ) else { return (0, false) }
+            return (row["backfillOffset"], row["done"])
+        }) ?? (0, false)
+    }
+
+    /// Persists backfill progress for a view (fire-and-forget, off the main thread).
+    func setBackfillCursor(account: String, mailbox: String, offset: Int, done: Bool) {
+        guard let dbQueue else { return }
+        let key = "\(account)|\(mailbox)"
+        DispatchQueue.global(qos: .utility).async {
+            try? dbQueue.write { db in
+                try db.execute(sql: """
+                    INSERT INTO sync_state (key, backfillOffset, done) VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                        backfillOffset = excluded.backfillOffset, done = excluded.done
+                    """, arguments: [key, offset, done])
+            }
+        }
     }
 
     /// Most-recent indexed messages for a view (newest first). `account == nil`
