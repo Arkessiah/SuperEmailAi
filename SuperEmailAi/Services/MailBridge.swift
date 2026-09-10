@@ -369,6 +369,18 @@ final class MailBridge {
         return (content: content, source: source, recipients: recipients)
     }
 
+    // MARK: - Fetch a single message's headers (cheaper than the full source)
+
+    func fetchHeaders(id: Int, mailbox: String, account: String? = nil) async throws -> String {
+        let accountFilter = account.map { "of account \"\($0)\"" } ?? ""
+        let script = """
+        tell application "Mail"
+            return all headers of (first message of mailbox "\(mailbox)" \(accountFilter) whose id is \(id))
+        end tell
+        """
+        return try await runAppleScript(script).stringValue ?? ""
+    }
+
     // MARK: - AppleScript execution
 
     /// Serial queue: Mail Apple events must not run concurrently, or overlapping

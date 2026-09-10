@@ -185,7 +185,8 @@ final class MailManager: ObservableObject {
 
     /// Sends the auto-reply for a newly-arrived message if it qualifies. Safe by
     /// design: only to real people (.personas), once per sender, never to
-    /// notifications / newsletters / no-reply.
+    /// notifications / newsletters / no-reply, nor to mailing lists, bulk mail,
+    /// bounces or other auto-responders (header check, RFC 3834).
     private func maybeAutoReply(to message: MailMessage) async {
         guard autoReplyEnabled,
               !autoReplyMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -197,6 +198,13 @@ final class MailManager: ObservableObject {
 
         guard autoReplyScope == .all || importantSenders.contains(message.senderAddress) else { return }
 
+        // The From is forgeable: answering bulk or automated mail causes backscatter
+        // and auto-reply loops. Fail-safe: if the headers can't be read, don't reply.
+        guard let headers = try? await bridge.fetchHeaders(id: message.messageId, mailbox: message.mailbox, account: message.account),
+              !headers.isEmpty,
+              MIMEParser.automationMarker(inHeaders: headers) == nil
+        else { return }
+
         let subject = message.subject.lowercased().hasPrefix("re:") ? message.subject : "Re: \(message.subject)"
         do {
             try await bridge.sendMail(to: message.senderAddress, subject: subject, body: autoReplyMessage, fromAccount: message.account)
@@ -204,7 +212,7 @@ final class MailManager: ObservableObject {
             autoReplyCount = repliedSenders.count
             UserDefaults.standard.set(Array(repliedSenders), forKey: "repliedSenders")
         } catch {
-            // Silent; the next poll will retry.
+            // Silent. The monitor already marked the message as seen, so it isn't retried.
         }
     }
 

@@ -43,7 +43,7 @@ struct AutoReplyView: View {
             .pickerStyle(.segmented)
 
             VStack(alignment: .leading, spacing: 4) {
-                Label("Solo a personas reales — nunca a notificaciones, boletines o no-reply.",
+                Label("Solo a personas reales — nunca a notificaciones, boletines, no-reply, listas de correo ni respuestas automáticas.",
                       systemImage: "checkmark.shield.fill")
                     .font(.caption)
                     .foregroundStyle(.green)

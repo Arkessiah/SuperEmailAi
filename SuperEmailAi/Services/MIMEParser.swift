@@ -87,6 +87,33 @@ enum MIMEParser {
         return (https, mailto)
     }
 
+    /// Returns the header that marks a message as automated or bulk (mailing
+    /// lists, newsletters, bounces, other auto-responders), or `nil` for a normal
+    /// person-to-person message. Auto-replies must never answer those (RFC 3834):
+    /// it causes backscatter to forged senders and auto-reply loops.
+    static func automationMarker(inHeaders headers: String) -> String? {
+        let text = headers.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        func value(_ name: String) -> String { headerValue(name, in: text).lowercased() }
+
+        let autoSubmitted = value("Auto-Submitted")
+        if !autoSubmitted.isEmpty, !autoSubmitted.hasPrefix("no") { return "Auto-Submitted" }
+
+        let precedence = value("Precedence")
+        if ["bulk", "list", "junk"].contains(where: { precedence.hasPrefix($0) }) { return "Precedence" }
+
+        for name in ["List-Id", "List-Unsubscribe", "X-Autoreply", "X-Autorespond"] where !value(name).isEmpty {
+            return name
+        }
+
+        let suppress = value("X-Auto-Response-Suppress")
+        if ["all", "oof", "autoreply"].contains(where: { suppress.contains($0) }) { return "X-Auto-Response-Suppress" }
+
+        if value("Return-Path") == "<>" { return "Return-Path" }
+
+        return nil
+    }
+
     /// Recursively walks MIME parts (handles nested multipart) and returns the
     /// last text/html leaf found, decoded. Recursion is bounded: it only recurses
     /// when the boundary actually splits the block into strictly smaller pieces,
