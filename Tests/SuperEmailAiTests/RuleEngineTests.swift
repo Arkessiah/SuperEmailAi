@@ -96,3 +96,16 @@ func rule(_ c: [RuleCondition], mode: Rule.MatchMode = .all, action: RuleAction 
     let m = RuleEngine.evaluate(rule([.domainIs("example.com"), .isRead(false)]), msg(), ctx())
     #expect(m?.reason == "dominio es example.com y sin leer")
 }
+
+@Test func brakeTripsAboveTwentyFiveDisplacingActions() {
+    let del = rule([.senderContains("a")], action: .delete)
+    let read = rule([.senderContains("a")], action: .markRead, position: 1)
+    let planned = Array(repeating: (del, msg()), count: 26) + Array(repeating: (read, msg()), count: 100)
+    #expect(RuleEngine.brakedRules(planned) == [del.id])
+    #expect(RuleEngine.brakedRules(Array(planned.prefix(25))).isEmpty)
+}
+
+@Test func stableKeySurvivesAMove() {
+    #expect(RuleEngine.stableKey(msg(mailbox: "INBOX")) == RuleEngine.stableKey(msg(mailbox: "Archive")))
+    #expect(RuleEngine.stableKey(msg("a@x.com")) != RuleEngine.stableKey(msg("b@x.com")))
+}

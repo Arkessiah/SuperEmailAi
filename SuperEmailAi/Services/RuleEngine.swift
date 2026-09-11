@@ -77,6 +77,19 @@ enum RuleEngine {
         }
     }
 
+    /// Rules whose displacing actions in one automatic cycle exceed `limit` (safety brake).
+    static func brakedRules(_ planned: [(Rule, MailMessage)], limit: Int = 25) -> Set<String> {
+        var counts: [String: Int] = [:]
+        for (rule, _) in planned where rule.action.isDisplacing { counts[rule.id, default: 0] += 1 }
+        return Set(counts.filter { $0.value > limit }.keys)
+    }
+
+    /// Identity that survives moves and undo (Mail's internal id may change on a move),
+    /// so a message returned by "undo" is not processed again.
+    static func stableKey(_ m: MailMessage) -> String {
+        "\(m.account)|\(m.senderAddress.lowercased())|\(Int(m.dateReceived.timeIntervalSince1970))|\(m.subject)"
+    }
+
     private static func contains(_ haystack: String, _ needle: String) -> Bool {
         let n = needle.trimmed
         return !n.isEmpty && haystack.range(of: n, options: [.caseInsensitive, .diacriticInsensitive]) != nil
