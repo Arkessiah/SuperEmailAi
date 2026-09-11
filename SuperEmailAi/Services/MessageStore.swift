@@ -42,10 +42,16 @@ struct MessageRecord: Codable, FetchableRecord, PersistableRecord {
     }
 }
 
-final class MessageStore {
+final class MessageStore: @unchecked Sendable {   // GRDB serializes database access
     static let shared = MessageStore()
 
-    private let dbQueue: DatabaseQueue?
+    let dbQueue: DatabaseQueue?
+
+    /// Opens the store over an existing database (in-memory in tests).
+    init(queue: DatabaseQueue) throws {
+        try Self.migrator.migrate(queue)
+        dbQueue = queue
+    }
 
     private init() {
         let base = FileManager.default
@@ -104,7 +110,46 @@ final class MessageStore {
         migrator.registerMigration("sync_state_reset_v2") { db in
             try db.execute(sql: "DELETE FROM sync_state")
         }
+        // Rules engine (ARK-202): rules as JSON (extensible), history, processed mail.
+        migrator.registerMigration("rules_v1") { db in
+            try db.create(table: "rule") { t in
+                t.column("id", .text).primaryKey()
+                t.column("position", .integer).notNull()
+                t.column("json", .blob).notNull()
+            }
+            try db.create(table: "rule_run") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("batchId", .text).notNull()
+                t.column("ruleId", .text).notNull().indexed()
+                t.column("ruleName", .text).notNull()
+                t.column("messageKey", .text).notNull()
+                t.column("account", .text).notNull()
+                t.column("mailbox", .text).notNull()
+                t.column("messageId", .integer).notNull()
+                t.column("rfcMessageId", .text)
+                t.column("targetMailbox", .text)
+                t.column("sender", .text).notNull()
+                t.column("subject", .text).notNull()
+                t.column("action", .text).notNull()
+                t.column("reason", .text).notNull()
+                t.column("trigger", .text).notNull()
+                t.column("status", .text).notNull()
+                t.column("error", .text)
+                t.column("executedAt", .datetime).notNull().indexed()
+                t.column("undoneAt", .datetime)
+            }
+            try db.create(table: "rule_processed") { t in
+                t.column("messageKey", .text).primaryKey()
+                t.column("processedAt", .datetime).notNull()
+            }
+        }
         return migrator
+    }
+
+    /// Synchronous upsert, for the rules cycle (it needs the rows before querying them).
+    func upsertNow(_ messages: [MailMessage]) throws {
+        guard let dbQueue, !messages.isEmpty else { return }
+        try dbQueue.write { db in for m in messages { try MessageRecord(m).save(db) } }
     }
 
     /// Inserts or updates the given messages (by primary key). Runs off the main thread.
