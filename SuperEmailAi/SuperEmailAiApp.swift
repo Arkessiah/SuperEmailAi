@@ -10,6 +10,7 @@ struct SuperEmailAiApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(mailManager)
+                .environmentObject(mailManager.rules)
                 .frame(minWidth: 900, minHeight: 600)
         }
         .windowStyle(.titleBar)
