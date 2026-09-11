@@ -72,3 +72,19 @@ private func setUp(_ action: RuleAction) throws -> (RuleRunner, FakeMail, Messag
     for n in 1...3 { await runner.runCycle(fresh: [inbox(n)], now: fixedNow) }
     #expect(runner.rules[0].pausedReason == "3 fallos seguidos")
 }
+
+@MainActor @Test func undoingOneMessageTeachesNever() async throws {
+    let (runner, _, store, rule) = try setUp(.delete)
+    await runner.runCycle(fresh: [inbox(1)], now: fixedNow)
+    let id = try #require(try store.runs().first?.id)
+    await runner.undo(runIds: [id])
+    #expect(try store.runs(ids: [id]).first?.status == .undone)
+    #expect(runner.rules.first { $0.id == rule.id }?.neverSenders.map(\.address) == ["s1@x.com"])
+}
+
+@MainActor @Test func undoingABatchDoesNotLearn() async throws {
+    let (runner, _, store, _) = try setUp(.markRead)
+    await runner.runCycle(fresh: [inbox(1), inbox(2)], now: fixedNow)
+    await runner.undo(runIds: try store.runs().compactMap(\.id))
+    #expect(runner.rules[0].neverSenders.isEmpty)
+}

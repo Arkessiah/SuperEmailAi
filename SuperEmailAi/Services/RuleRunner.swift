@@ -286,4 +286,67 @@ final class RuleRunner: ObservableObject {
         persist(r)
         notices.append(RuleNotice(ruleId: id, ruleName: r.name, message: reason))
     }
+
+    // MARK: - Undo
+
+    /// Undoes history rows. One row teaches the rule ("never" for that sender);
+    /// a whole batch doesn't (the rule itself was probably wrong).
+    func undo(runIds: [Int64]) async {
+        guard let runs = try? store.runs(ids: runIds) else { return }
+        var undone: [RuleRun] = []
+        for run in runs where run.status == .ok {
+            guard let id = run.id else { continue }
+            do {
+                try await undoOne(run)
+                try store.setRunStatus(ids: [id], .undone)
+                undone.append(run)
+            } catch {
+                try? store.setRunStatus(ids: [id], .undoFailed, error: error.localizedDescription)
+            }
+        }
+        if runIds.count == 1, let run = undone.first { learnNever(from: run) }
+        loadHistory()
+    }
+
+    /// History ids of a whole execution ("Deshacer ejecución").
+    func runIds(ofBatch batch: String) -> [Int64] {
+        history.filter { $0.batchId == batch && $0.status == .ok }.compactMap(\.id)
+    }
+
+    private func undoOne(_ run: RuleRun) async throws {
+        switch run.action {
+        case "move", "archive", "delete":
+            // Delete: `targetMailbox` is the account's Trash, resolved when the rule ran.
+            guard let rid = run.rfcMessageId, let from = run.targetMailbox else { throw UndoError.cannotLocate }
+            let moved = try await bridge.moveByRFC([rid], from: from, to: run.mailbox, account: run.account)
+            guard !moved.isEmpty else { throw UndoError.notFound(from) }
+        case "markRead":
+            let ok = try await bridge.apply(.setRead(false), ids: [run.messageId], mailbox: run.mailbox, account: run.account)
+            guard !ok.isEmpty else { throw UndoError.notFound(run.mailbox) }
+        case "flag":
+            let ok = try await bridge.apply(.setFlag(false), ids: [run.messageId], mailbox: run.mailbox, account: run.account)
+            guard !ok.isEmpty else { throw UndoError.notFound(run.mailbox) }
+        default:
+            throw UndoError.cannotLocate
+        }
+    }
+
+    private func learnNever(from run: RuleRun) {
+        guard var r = rules.first(where: { $0.id == run.ruleId }) else { return }
+        let address = run.sender.lowercased()
+        guard !r.neverSenders.contains(where: { $0.address.lowercased() == address }) else { return }
+        r.neverSenders.append(SenderEntry(address: run.sender, origin: .correction))
+        persist(r)
+    }
+}
+
+enum UndoError: LocalizedError {
+    case cannotLocate
+    case notFound(String)
+    var errorDescription: String? {
+        switch self {
+        case .cannotLocate: "No hay datos para localizar el correo"
+        case .notFound(let box): "No está en «\(box)» (¿se vació la Papelera o se movió a mano?)"
+        }
+    }
 }
