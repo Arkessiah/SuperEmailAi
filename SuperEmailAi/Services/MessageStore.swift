@@ -180,6 +180,18 @@ final class MessageStore: @unchecked Sendable {   // GRDB serializes database ac
         }
     }
 
+    /// Updates the read flag of indexed messages (rules marked them read in Mail).
+    func setRead(ids: [String], _ read: Bool) {
+        guard let dbQueue, !ids.isEmpty else { return }
+        DispatchQueue.global(qos: .utility).async {
+            try? dbQueue.write { db in
+                for id in ids {
+                    try db.execute(sql: "UPDATE message SET isRead = ? WHERE id = ?", arguments: [read, id])
+                }
+            }
+        }
+    }
+
     /// Removes every indexed message from a given sender in a mailbox (used by
     /// "delete all from this sender").
     func deleteBySender(address: String, account: String, mailbox: String) {

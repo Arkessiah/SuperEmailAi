@@ -89,6 +89,15 @@ final class MailManager: ObservableObject {
     }
     private let store = MessageStore.shared   // Phase 1: SQLite index (write in parallel)
 
+    /// Rules engine (ARK-202): runs in the alerts monitor cycle; reports what it changed.
+    lazy var rules: RuleRunner = RuleRunner(
+        context: { [unowned self] in
+            RuleContext(now: Date(), importantSenders: self.importantSenders, newsletterSenders: self.newsletterSenders)
+        },
+        mailboxesOf: { [unowned self] account in self.accounts.first { $0.name == account }?.mailboxes ?? [] },
+        onApplied: { [unowned self] removed, read in self.applyRuleResults(removed: removed, read: read) }
+    )
+
     /// IDs deleted/moved this session. Mail's IMAP deletion is slow, so a refresh
     /// can still return them — we tombstone them so they don't reappear in the
     /// list or get re-indexed before Mail commits the removal.
@@ -101,6 +110,7 @@ final class MailManager: ObservableObject {
         newsletterSenders = Set(UserDefaults.standard.stringArray(forKey: "newsletterSenders") ?? [])
         importantSenders = Set(UserDefaults.standard.stringArray(forKey: "importantSenders") ?? [])
         loadAutoReply()
+        rules.load()
     }
 
     // MARK: - Alerts (incoming-mail monitor for important senders)
@@ -122,18 +132,22 @@ final class MailManager: ObservableObject {
         }
     }
 
+    /// Must fetch as many as each check does: otherwise messages beyond the baseline
+    /// would look new on the first check and auto-reply would answer old mail.
     private func baselineSeenIDs() async {
         for account in accounts {
-            if let recent = try? await bridge.fetchMessages(from: "INBOX", account: account.name, limit: 30) {
+            if let recent = try? await bridge.fetchMessages(from: "INBOX", account: account.name, limit: 50) {
                 for m in recent { seenAlertIDs.insert(m.id) }
             }
         }
     }
 
     private func checkForAlerts() async {
-        guard !importantSenders.isEmpty || autoReplyEnabled else { return }
+        guard !importantSenders.isEmpty || autoReplyEnabled || rules.hasActiveRules else { return }
+        var fresh: [MailMessage] = []
         for account in accounts {
-            guard let recent = try? await bridge.fetchMessages(from: "INBOX", account: account.name, limit: 15) else { continue }
+            guard let recent = try? await bridge.fetchMessages(from: "INBOX", account: account.name, limit: 50) else { continue }
+            fresh += recent
             for m in recent where !seenAlertIDs.contains(m.id) {
                 seenAlertIDs.insert(m.id)
                 if importantSenders.contains(m.senderAddress) {
@@ -143,6 +157,21 @@ final class MailManager: ObservableObject {
             }
         }
         if alerts.count > 50 { alerts = Array(alerts.prefix(50)) }
+        await rules.runCycle(fresh: fresh)
+    }
+
+    /// Keeps the list and the index in step with what the rules just did in Mail.
+    func applyRuleResults(removed: [String], read: [String]) {
+        guard !removed.isEmpty || !read.isEmpty else { return }
+        let gone = Set(removed), nowRead = Set(read)
+        deletedIds.formUnion(gone)
+        allMessages.removeAll { gone.contains($0.id) }
+        allMessages = allMessages.map { nowRead.contains($0.id) ? $0.with(isRead: true) : $0 }
+        selectedMessages.subtract(gone)
+        store.delete(ids: removed)
+        store.setRead(ids: read, true)
+        buildSenderGroups()
+        applyFilters()
     }
 
     func dismissAlert(_ id: String) { alerts.removeAll { $0.id == id } }
