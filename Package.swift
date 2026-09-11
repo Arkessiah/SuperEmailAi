@@ -15,6 +15,14 @@ let package = Package(
             ],
             path: "SuperEmailAi",
             exclude: ["Info.plist", "SuperEmailAi.entitlements"]
+        ),
+        .testTarget(
+            name: "SuperEmailAiTests",
+            dependencies: [
+                "SuperEmailAi",
+                .product(name: "GRDB", package: "GRDB.swift")
+            ],
+            path: "Tests/SuperEmailAiTests"
         )
     ]
 )
