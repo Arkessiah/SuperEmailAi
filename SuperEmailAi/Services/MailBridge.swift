@@ -523,3 +523,101 @@ enum MailBridgeError: LocalizedError {
         }
     }
 }
+
+// MARK: - Batch actions for the rules engine (ARK-202)
+
+/// What the rules engine needs from Mail (lets tests use a fake).
+protocol MailActions {
+    func apply(_ op: MailBridge.BridgeOp, ids: [Int], mailbox: String, account: String) async throws -> [Int]
+    func rfcMessageIDs(ids: [Int], mailbox: String, account: String) async throws -> [Int: String]
+    func moveByRFC(_ rfcIDs: [String], from: String, to: String, account: String) async throws -> [String]
+}
+
+extension MailBridge: MailActions {
+    enum BridgeOp: Equatable { case move(to: String), delete, setRead(Bool), setFlag(Bool) }
+
+    /// Applies `op` to each message id and returns the ids that worked.
+    func apply(_ op: BridgeOp, ids: [Int], mailbox: String, account: String) async throws -> [Int] {
+        guard !ids.isEmpty else { return [] }
+        let result = try await runAppleScript(Self.applyScript(op, ids: ids, mailbox: mailbox, account: account))
+        return listItems(result).map { Int($0.int32Value) }
+    }
+
+    /// Message-ID header per message id (to find the message again after a move).
+    func rfcMessageIDs(ids: [Int], mailbox: String, account: String) async throws -> [Int: String] {
+        guard !ids.isEmpty else { return [:] }
+        let result = try await runAppleScript(Self.rfcIDsScript(ids: ids, mailbox: mailbox, account: account))
+        var out: [Int: String] = [:]
+        for pair in listItems(result) {
+            let parts = listItems(pair)
+            if parts.count == 2, let rid = parts[1].stringValue { out[Int(parts[0].int32Value)] = rid }
+        }
+        return out
+    }
+
+    /// Moves messages found by Message-ID (undo). Returns the Message-IDs that moved.
+    func moveByRFC(_ rfcIDs: [String], from: String, to: String, account: String) async throws -> [String] {
+        guard !rfcIDs.isEmpty else { return [] }
+        let result = try await runAppleScript(Self.moveByRFCScript(rfcIDs, from: from, to: to, account: account))
+        return listItems(result).compactMap(\.stringValue)
+    }
+
+    static func applyScript(_ op: BridgeOp, ids: [Int], mailbox: String, account: String) -> String {
+        let acc = AppleScriptText.quoted(account)
+        let statement: String
+        switch op {
+        case .move(let to): statement = "move theMsg to (mailbox \(AppleScriptText.quoted(to)) of account \(acc))"
+        case .delete: statement = "delete theMsg"
+        case .setRead(let value): statement = "set read status of theMsg to \(value)"
+        case .setFlag(let value): statement = "set flagged status of theMsg to \(value)"
+        }
+        return """
+        tell application "Mail"
+            set okIds to {}
+            set theMailbox to mailbox \(AppleScriptText.quoted(mailbox)) of account \(acc)
+            repeat with theId in {\(ids.map(String.init).joined(separator: ", "))}
+                try
+                    set theMsg to (first message of theMailbox whose id is (theId as integer))
+                    \(statement)
+                    set end of okIds to (theId as integer)
+                end try
+            end repeat
+            return okIds
+        end tell
+        """
+    }
+
+    static func rfcIDsScript(ids: [Int], mailbox: String, account: String) -> String {
+        """
+        tell application "Mail"
+            set out to {}
+            set theMailbox to mailbox \(AppleScriptText.quoted(mailbox)) of account \(AppleScriptText.quoted(account))
+            repeat with theId in {\(ids.map(String.init).joined(separator: ", "))}
+                try
+                    set theMsg to (first message of theMailbox whose id is (theId as integer))
+                    set end of out to {(theId as integer), (message id of theMsg)}
+                end try
+            end repeat
+            return out
+        end tell
+        """
+    }
+
+    static func moveByRFCScript(_ rfcIDs: [String], from: String, to: String, account: String) -> String {
+        let acc = AppleScriptText.quoted(account)
+        return """
+        tell application "Mail"
+            set okIds to {}
+            set fromBox to mailbox \(AppleScriptText.quoted(from)) of account \(acc)
+            set toBox to mailbox \(AppleScriptText.quoted(to)) of account \(acc)
+            repeat with rid in {\(rfcIDs.map(AppleScriptText.quoted).joined(separator: ", "))}
+                try
+                    move (first message of fromBox whose message id is (rid as text)) to toBox
+                    set end of okIds to (rid as text)
+                end try
+            end repeat
+            return okIds
+        end tell
+        """
+    }
+}
