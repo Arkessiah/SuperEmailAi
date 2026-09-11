@@ -2,16 +2,21 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var manager: MailManager
+    @EnvironmentObject var rules: RuleRunner
     @State private var showDuplicates = false
     @State private var showMoveSheet = false
     @State private var showCleanup = false
     @State private var showCommandPalette = false
     @State private var showAskAI = false
     @State private var showAlerts = false
+    @State private var showRules = false
     @State private var moveTarget: MoveTarget?
     @AppStorage("appAppearance") private var appearanceRaw = AppAppearance.dark.rawValue
 
     private var appearance: AppAppearance { AppAppearance(rawValue: appearanceRaw) ?? .system }
+
+    /// The bell lights up for important-sender alerts and for paused rules.
+    private var hasAlerts: Bool { !manager.alerts.isEmpty || !rules.notices.isEmpty }
 
     private var paletteCommands: [PaletteCommand] {
         [
@@ -21,6 +26,7 @@ struct ContentView: View {
                 Task { await manager.loadMessages() }
             },
             PaletteCommand(title: "Llévame a cero…", icon: "trash.slash") { showCleanup = true },
+            PaletteCommand(title: "Reglas…", icon: "line.3.horizontal.decrease.circle") { showRules = true },
             PaletteCommand(title: "Ask AI…", icon: "sparkles") { showAskAI = true },
             PaletteCommand(title: "Ver duplicados", icon: "doc.on.doc") {
                 manager.mode = .limpieza
@@ -109,10 +115,10 @@ struct ContentView: View {
                 Button {
                     showAlerts.toggle()
                 } label: {
-                    Image(systemName: manager.alerts.isEmpty ? "bell" : "bell.badge.fill")
-                        .symbolRenderingMode(manager.alerts.isEmpty ? .monochrome : .multicolor)
+                    Image(systemName: hasAlerts ? "bell.badge.fill" : "bell")
+                        .symbolRenderingMode(hasAlerts ? .multicolor : .monochrome)
                 }
-                .help("Alertas de remitentes importantes")
+                .help("Alertas de remitentes importantes y reglas en pausa")
                 .popover(isPresented: $showAlerts, arrowEdge: .bottom) {
                     AlertsView()
                 }
@@ -182,6 +188,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showAskAI) {
             AskAIView()
+        }
+        .sheet(isPresented: $showRules) {
+            RulesView()
         }
         .background(
             Button("") { showCommandPalette = true }

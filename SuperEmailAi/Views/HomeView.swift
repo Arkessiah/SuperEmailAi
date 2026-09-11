@@ -1,11 +1,13 @@
 import SwiftUI
 
 /// "Inicio" dashboard: a Quick-Start section showcasing features as cards
-/// (FlowAI-style). Auto-respuesta is live (opens its config); the others are
+/// (FlowAI-style). Reglas and Auto-respuesta open their screens; the others are
 /// teasers for now.
 struct HomeView: View {
     @EnvironmentObject var manager: MailManager
+    @EnvironmentObject var rules: RuleRunner
     @State private var showAutoReply = false
+    @State private var showRules = false
 
     private struct Feature: Identifiable {
         let id = UUID()
@@ -18,6 +20,13 @@ struct HomeView: View {
 
     private var features: [Feature] {
         [
+            Feature(
+                icon: "line.3.horizontal.decrease.circle",
+                title: "Reglas",
+                description: "Ordena el correo nuevo solo: mueve, archiva, borra o marca según tus condiciones, con prueba previa y deshacer.",
+                badge: rules.rules.contains(where: \.isEnabled) ? "\(rules.rules.filter(\.isEnabled).count) activas" : "Configurar",
+                action: { showRules = true }
+            ),
             Feature(
                 icon: "arrowshape.turn.up.left.fill",
                 title: "Auto-respuesta",
@@ -80,6 +89,9 @@ struct HomeView: View {
         .background(Color.appBackground)
         .sheet(isPresented: $showAutoReply) {
             AutoReplyView()
+        }
+        .sheet(isPresented: $showRules) {
+            RulesView()
         }
     }
 }

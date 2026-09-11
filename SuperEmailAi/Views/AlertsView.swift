@@ -1,9 +1,10 @@
 import SwiftUI
 
 /// In-app alerts popover: new mail from important senders, detected by the
-/// background monitor.
+/// background monitor, and rules paused by the safety brake or by failures.
 struct AlertsView: View {
     @EnvironmentObject var manager: MailManager
+    @EnvironmentObject var rules: RuleRunner
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -18,6 +19,24 @@ struct AlertsView: View {
             .padding(10)
 
             Divider()
+
+            if !rules.notices.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Reglas en pausa").font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                    ForEach(rules.notices) { notice in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(notice.ruleName).font(.subheadline.weight(.medium))
+                                Text(notice.message).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("Continuar") { rules.resume(notice.ruleId) }.controlSize(.small)
+                        }
+                    }
+                }
+                .padding(10)
+                Divider()
+            }
 
             if manager.alerts.isEmpty {
                 VStack(spacing: 8) {

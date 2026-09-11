@@ -8,6 +8,7 @@ struct MessageListView: View {
     @State private var category: MailCategory? = nil
     @State private var showDeleteConfirmation = false
     @State private var messagesToDelete: [MailMessage] = []
+    @State private var ruleFromSender: Rule?
 
     var displayedMessages: [MailMessage] {
         // When the toolbar search is active, show global FTS results from the index.
@@ -199,8 +200,14 @@ struct MessageListView: View {
                             moveTarget = .selected
                             showMoveSheet = true
                         }
+                    },
+                    onCreateRule: { msg in
+                        // Least destructive default; the user picks the action in the editor.
+                        ruleFromSender = Rule(name: "Correo de \(msg.senderAddress)",
+                                              conditions: [.senderIs(msg.senderAddress)], action: .markRead)
                     }
                 )
+                .sheet(item: $ruleFromSender) { RulesView(prefill: $0) }
             }
         }
         .background(Color.appBackground)

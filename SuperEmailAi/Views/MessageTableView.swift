@@ -15,6 +15,7 @@ struct MessageTableView: NSViewRepresentable {
     var onToggleRead: () -> Void
     var onLoadMore: () -> Void
     var onMove: () -> Void = {}
+    var onCreateRule: (MailMessage) -> Void = { _ in }
 
     func makeNSView(context: Context) -> NSScrollView {
         let table = KeyTableView()
@@ -173,6 +174,10 @@ struct MessageTableView: NSViewRepresentable {
                 )
                 star.target = self
                 menu.addItem(star)
+                let ruleItem = NSMenuItem(title: "Crear regla desde este remitente…",
+                                          action: #selector(createRuleAction), keyEquivalent: "")
+                ruleItem.target = self
+                menu.addItem(ruleItem)
             }
         }
 
@@ -186,6 +191,10 @@ struct MessageTableView: NSViewRepresentable {
         @objc private func toggleImportantAction() {
             guard let row = tableView?.selectedRow, messages.indices.contains(row) else { return }
             parent.onToggleImportant(messages[row])
+        }
+        @objc private func createRuleAction() {
+            guard let row = tableView?.selectedRow, messages.indices.contains(row) else { return }
+            parent.onCreateRule(messages[row])
         }
     }
 }
