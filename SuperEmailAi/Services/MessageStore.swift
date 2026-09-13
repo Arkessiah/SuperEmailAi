@@ -143,6 +143,17 @@ final class MessageStore: @unchecked Sendable {   // GRDB serializes database ac
                 t.column("processedAt", .datetime).notNull()
             }
         }
+        // "Boletines" (ARK-203): how each sender lets you unsubscribe (from its headers).
+        migrator.registerMigration("sender_unsubscribe_v1") { db in
+            try db.create(table: "sender_unsubscribe") { t in
+                t.column("senderAddress", .text).primaryKey()
+                t.column("link", .text)
+                t.column("mailto", .text)
+                t.column("oneClick", .boolean).notNull()
+                t.column("checkedAt", .datetime).notNull()
+                t.column("unsubscribedAt", .datetime)
+            }
+        }
         return migrator
     }
 
