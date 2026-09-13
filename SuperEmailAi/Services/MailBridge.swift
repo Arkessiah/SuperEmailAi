@@ -531,6 +531,7 @@ protocol MailActions {
     func apply(_ op: MailBridge.BridgeOp, ids: [Int], mailbox: String, account: String) async throws -> [Int]
     func rfcMessageIDs(ids: [Int], mailbox: String, account: String) async throws -> [Int: String]
     func moveByRFC(_ rfcIDs: [String], from: String, to: String, account: String) async throws -> [String]
+    func fetchHeaders(id: Int, mailbox: String, account: String?) async throws -> String
 }
 
 extension MailBridge: MailActions {

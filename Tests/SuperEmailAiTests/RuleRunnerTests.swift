@@ -19,6 +19,9 @@ final class FakeMail: MailActions, @unchecked Sendable {
     }
 
     func moveByRFC(_ rfcIDs: [String], from: String, to: String, account: String) async throws -> [String] { rfcIDs }
+
+    var headers: [Int: String] = [:]
+    func fetchHeaders(id: Int, mailbox: String, account: String?) async throws -> String { headers[id] ?? "" }
 }
 
 private func inbox(_ n: Int) -> MailMessage {
