@@ -87,6 +87,22 @@ enum MIMEParser {
         return (https, mailto)
     }
 
+    /// What a newsletter offers to unsubscribe: a link (http/https), a mailto, and whether
+    /// the link accepts RFC 8058 one-click (`List-Unsubscribe-Post`, https links only).
+    struct UnsubscribeOptions: Equatable {
+        var link: URL?
+        var mailto: String?
+        var oneClick: Bool
+    }
+
+    static func unsubscribeOptions(fromSource source: String) -> UnsubscribeOptions {
+        let found = listUnsubscribe(fromSource: source)
+        let post = headerValue("List-Unsubscribe-Post", in: source).lowercased()
+            .replacingOccurrences(of: " ", with: "")
+        let oneClick = found.https?.scheme?.lowercased() == "https" && post.contains("list-unsubscribe=one-click")
+        return UnsubscribeOptions(link: found.https, mailto: found.mailto, oneClick: oneClick)
+    }
+
     /// Returns the header that marks a message as automated or bulk (mailing
     /// lists, newsletters, bounces, other auto-responders), or `nil` for a normal
     /// person-to-person message. Auto-replies must never answer those (RFC 3834):
