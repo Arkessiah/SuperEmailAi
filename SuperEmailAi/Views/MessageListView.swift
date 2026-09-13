@@ -396,17 +396,36 @@ struct MessageDetailPane: View {
 
             Divider()
 
-            if manager.openedUnsubscribeURL != nil {
+            if let unsubscribe = manager.openedUnsubscribe {
                 HStack(spacing: 8) {
                     Image(systemName: "nosign").foregroundStyle(.orange)
                     Text("Boletín")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Button { manager.unsubscribeFromOpened() } label: {
-                        Label("Desuscribir", systemImage: "hand.raised").font(.caption)
+                    switch manager.unsubscribeState {
+                    case .working:
+                        ProgressView().controlSize(.small)
+                    case .done:
+                        Label("Baja solicitada", systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    case .failed(let message):
+                        Text(message).font(.caption).foregroundStyle(.red).lineLimit(2)
+                    case .idle:
+                        EmptyView()
                     }
-                    .buttonStyle(.bordered)
+                    if manager.unsubscribeState != .done && manager.unsubscribeState != .working {
+                        Button { Task { await manager.unsubscribeFromOpened() } } label: {
+                            Label(unsubscribe.oneClick ? "Darse de baja"
+                                  : unsubscribe.link != nil ? "Abrir enlace de baja" : "Escribir para darse de baja",
+                                  systemImage: "hand.raised")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                        .help(unsubscribe.oneClick ? "Se da de baja desde la app, sin abrir el navegador"
+                                                   : "Este boletín no admite baja en un clic")
+                    }
                     Button(role: .destructive) {
                         Task { await manager.deleteAllFromOpenedSender() }
                     } label: {

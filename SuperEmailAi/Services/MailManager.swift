@@ -48,7 +48,15 @@ final class MailManager: ObservableObject {
     @Published var openedBody: String = ""
     @Published var openedHTML: String?
     @Published var openedRecipients: [String] = []
-    @Published var openedUnsubscribeURL: URL?
+    @Published var openedUnsubscribe: MIMEParser.UnsubscribeOptions?   // how the open newsletter lets you unsubscribe
+    @Published var unsubscribeState: UnsubscribeState = .idle
+
+    enum UnsubscribeState: Equatable {
+        case idle, working, done
+        case failed(String)
+    }
+
+    private let unsubscriber = Unsubscriber()
     @Published var isLoadingBody = false
     @Published var showRemoteImages = false   // per-message opt-in to remote content
 
@@ -437,7 +445,8 @@ final class MailManager: ObservableObject {
         openedBody = ""
         openedHTML = nil
         openedRecipients = []
-        openedUnsubscribeURL = nil
+        openedUnsubscribe = nil
+        unsubscribeState = .idle
         showRemoteImages = false
         isLoadingBody = true
         do {
@@ -450,8 +459,9 @@ final class MailManager: ObservableObject {
             openedBody = raw.content
             openedRecipients = raw.recipients.isEmpty ? MIMEParser.recipients(fromSource: raw.source) : raw.recipients
             openedHTML = MIMEParser.htmlBody(fromSource: raw.source)
-            openedUnsubscribeURL = MIMEParser.listUnsubscribe(fromSource: raw.source).https
-            if openedUnsubscribeURL != nil {
+            let unsubscribe = MIMEParser.unsubscribeOptions(fromSource: raw.source)
+            if unsubscribe.link != nil || unsubscribe.mailto != nil {
+                openedUnsubscribe = unsubscribe
                 rememberNewsletter(message.senderAddress)
             }
         } catch {
@@ -823,10 +833,25 @@ final class MailManager: ObservableObject {
         isLoading = false
     }
 
-    /// Opens the open message's unsubscribe link in the browser.
-    func unsubscribeFromOpened() {
-        guard let url = openedUnsubscribeURL else { return }
-        NSWorkspace.shared.open(url)
+    /// Unsubscribes from the open newsletter: a one-click POST from the app when the link
+    /// supports it (RFC 8058); otherwise opens the link in the browser, or a mailto in Mail.
+    /// Never automatic: always the user's click.
+    func unsubscribeFromOpened() async {
+        guard let options = openedUnsubscribe else { return }
+        if options.oneClick, let link = options.link {
+            let messageId = openedMessage?.id
+            unsubscribeState = .working
+            do {
+                try await unsubscriber.oneClick(link)
+                if openedMessage?.id == messageId { unsubscribeState = .done }
+            } catch {
+                if openedMessage?.id == messageId { unsubscribeState = .failed(error.localizedDescription) }
+            }
+        } else if let link = options.link {
+            NSWorkspace.shared.open(link)
+        } else if let mailto = options.mailto, let url = URL(string: "mailto:" + mailto) {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     /// Deletes every message from the open message's sender in its mailbox.
