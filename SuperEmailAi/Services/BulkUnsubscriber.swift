@@ -51,6 +51,11 @@ final class BulkUnsubscriber {
         self.onApplied = onApplied
     }
 
+    /// Senders from the index (most mail first) and how each lets you unsubscribe, if known.
+    func senders(minMessages: Int = 1) -> (stats: [SenderStat], cache: [String: SenderUnsubscribe]) {
+        ((try? store.senderStats(minMessages: minMessages)) ?? [], (try? store.unsubscribeCache()) ?? [:])
+    }
+
     /// How a sender lets you unsubscribe: remembered, or read from its latest message's
     /// headers (and remembered). Nil when the headers can't be read.
     func options(for sender: String) async -> MIMEParser.UnsubscribeOptions? {

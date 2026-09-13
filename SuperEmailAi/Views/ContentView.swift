@@ -10,6 +10,7 @@ struct ContentView: View {
     @State private var showAskAI = false
     @State private var showAlerts = false
     @State private var showRules = false
+    @State private var showBoletines = false
     @State private var moveTarget: MoveTarget?
     @AppStorage("appAppearance") private var appearanceRaw = AppAppearance.dark.rawValue
 
@@ -27,6 +28,7 @@ struct ContentView: View {
             },
             PaletteCommand(title: "Llévame a cero…", icon: "trash.slash") { showCleanup = true },
             PaletteCommand(title: "Reglas…", icon: "line.3.horizontal.decrease.circle") { showRules = true },
+            PaletteCommand(title: "Boletines…", icon: "newspaper") { showBoletines = true },
             PaletteCommand(title: "Ask AI…", icon: "sparkles") { showAskAI = true },
             PaletteCommand(title: "Ver duplicados", icon: "doc.on.doc") {
                 manager.mode = .limpieza
@@ -88,6 +90,16 @@ struct ContentView: View {
                         Label("Llévame a cero", systemImage: "trash.slash")
                     }
                     .help("Vaciar el buzón por criterios (con conteo previo)")
+                }
+            }
+            ToolbarItem(placement: .automatic) {
+                if manager.mode == .limpieza {
+                    Button {
+                        showBoletines = true
+                    } label: {
+                        Label("Boletines", systemImage: "newspaper")
+                    }
+                    .help("Darse de baja de varios boletines a la vez")
                 }
             }
             ToolbarItem(placement: .automatic) {
@@ -191,6 +203,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showRules) {
             RulesView()
+        }
+        .sheet(isPresented: $showBoletines) {
+            BoletinesView()
         }
         .background(
             Button("") { showCommandPalette = true }

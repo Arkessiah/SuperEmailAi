@@ -106,6 +106,12 @@ final class MailManager: ObservableObject {
         onApplied: { [unowned self] removed, read in self.applyRuleResults(removed: removed, read: read) }
     )
 
+    /// "Boletines" (ARK-203): bulk unsubscribe + inbox clean-up; reports what it removed.
+    lazy var bulkUnsubscribe: BulkUnsubscriber = BulkUnsubscriber(
+        mailboxesOf: { [unowned self] account in self.accounts.first { $0.name == account }?.mailboxes ?? [] },
+        onApplied: { [unowned self] removed, read in self.applyRuleResults(removed: removed, read: read) }
+    )
+
     /// IDs deleted/moved this session. Mail's IMAP deletion is slow, so a refresh
     /// can still return them — we tombstone them so they don't reappear in the
     /// list or get re-indexed before Mail commits the removal.
@@ -460,6 +466,7 @@ final class MailManager: ObservableObject {
             openedRecipients = raw.recipients.isEmpty ? MIMEParser.recipients(fromSource: raw.source) : raw.recipients
             openedHTML = MIMEParser.htmlBody(fromSource: raw.source)
             let unsubscribe = MIMEParser.unsubscribeOptions(fromSource: raw.source)
+            try? store.saveUnsubscribeOptions(unsubscribe, for: message.senderAddress)   // for "Boletines"
             if unsubscribe.link != nil || unsubscribe.mailto != nil {
                 openedUnsubscribe = unsubscribe
                 rememberNewsletter(message.senderAddress)
@@ -839,10 +846,11 @@ final class MailManager: ObservableObject {
     func unsubscribeFromOpened() async {
         guard let options = openedUnsubscribe else { return }
         if options.oneClick, let link = options.link {
-            let messageId = openedMessage?.id
+            let messageId = openedMessage?.id, sender = openedMessage?.senderAddress
             unsubscribeState = .working
             do {
                 try await unsubscriber.oneClick(link)
+                if let sender { try? store.markUnsubscribed(sender) }   // shows in "Boletines"
                 if openedMessage?.id == messageId { unsubscribeState = .done }
             } catch {
                 if openedMessage?.id == messageId { unsubscribeState = .failed(error.localizedDescription) }

@@ -1,13 +1,14 @@
 import SwiftUI
 
 /// "Inicio" dashboard: a Quick-Start section showcasing features as cards
-/// (FlowAI-style). Reglas and Auto-respuesta open their screens; the others are
-/// teasers for now.
+/// (FlowAI-style). Reglas, Boletines and Auto-respuesta open their screens; the
+/// others are teasers for now.
 struct HomeView: View {
     @EnvironmentObject var manager: MailManager
     @EnvironmentObject var rules: RuleRunner
     @State private var showAutoReply = false
     @State private var showRules = false
+    @State private var showBoletines = false
 
     private struct Feature: Identifiable {
         let id = UUID()
@@ -26,6 +27,13 @@ struct HomeView: View {
                 description: "Ordena el correo nuevo solo: mueve, archiva, borra o marca según tus condiciones, con prueba previa y deshacer.",
                 badge: rules.rules.contains(where: \.isEnabled) ? "\(rules.rules.filter(\.isEnabled).count) activas" : "Configurar",
                 action: { showRules = true }
+            ),
+            Feature(
+                icon: "newspaper",
+                title: "Boletines",
+                description: "Mira qué remitentes te llenan la bandeja y apenas lees, y date de baja de varios a la vez, en un clic cuando se pueda.",
+                badge: "Revisar",
+                action: { showBoletines = true }
             ),
             Feature(
                 icon: "arrowshape.turn.up.left.fill",
@@ -92,6 +100,9 @@ struct HomeView: View {
         }
         .sheet(isPresented: $showRules) {
             RulesView()
+        }
+        .sheet(isPresented: $showBoletines) {
+            BoletinesView()
         }
     }
 }
