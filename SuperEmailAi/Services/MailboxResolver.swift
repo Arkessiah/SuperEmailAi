@@ -11,6 +11,17 @@ enum MailboxResolver {
     static func archive(in mailboxes: [String]) -> String? { first(of: archiveNames, in: mailboxes) }
     static func trash(in mailboxes: [String]) -> String? { first(of: trashNames, in: mailboxes) }
 
+    /// Archive mailbox per account; accounts without one are reported in `missing` (sorted).
+    static func archiveTargets(for accounts: Set<String>,
+                               mailboxesOf: (String) -> [String]) -> (targets: [String: String], missing: [String]) {
+        var targets: [String: String] = [:]
+        var missing: [String] = []
+        for account in accounts.sorted() {
+            if let box = archive(in: mailboxesOf(account)) { targets[account] = box } else { missing.append(account) }
+        }
+        return (targets, missing)
+    }
+
     private static func first(of candidates: [String], in mailboxes: [String]) -> String? {
         for name in candidates {
             if let hit = mailboxes.first(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) { return hit }

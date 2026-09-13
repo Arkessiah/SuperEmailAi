@@ -16,6 +16,13 @@ import Testing
     #expect(MailboxResolver.trash(in: ["INBOX"]) == nil)
 }
 
+@Test func archiveTargetsPerAccountAndReportsMissing() {
+    let boxes = ["iCloud": ["INBOX", "Archive"], "Gmail": ["INBOX", "[Gmail]/All Mail"], "Otra": ["INBOX"]]
+    let plan = MailboxResolver.archiveTargets(for: ["iCloud", "Gmail", "Otra"]) { boxes[$0] ?? [] }
+    #expect(plan.targets == ["iCloud": "Archive", "Gmail": "[Gmail]/All Mail"])
+    #expect(plan.missing == ["Otra"])
+}
+
 @Test func quotedEscapesAndStripsControlCharacters() {
     #expect(AppleScriptText.quoted("Caja \"rara\"\\x\n") == "\"Caja \\\"rara\\\"\\\\x\"")
 }

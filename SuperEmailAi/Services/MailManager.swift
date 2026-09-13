@@ -785,9 +785,42 @@ final class MailManager: ObservableObject {
         statusMessage = markRead ? "Marcados como leídos" : "Marcados como no leídos"
     }
 
-    /// Archives the current selection (moves to the "Archive" mailbox).
+    /// Archives the selection into each account's real archive mailbox (the name varies
+    /// by provider and language: Archive, Archivo, [Gmail]/All Mail…). Only messages Mail
+    /// confirms as moved leave the list; accounts without an archive are reported.
     func archiveSelection() async {
-        await moveSelectedMessages(to: "Archive")
+        let selected = allMessages.filter { selectedMessages.contains($0.id) }
+        guard !selected.isEmpty else { return }
+        let plan = MailboxResolver.archiveTargets(for: Set(selected.map(\.account))) { account in
+            self.accounts.first { $0.name == account }?.mailboxes ?? []
+        }
+
+        isLoading = true
+        var moved: [MailMessage] = []
+        for (account, target) in plan.targets {
+            let byMailbox = Dictionary(grouping: selected.filter { $0.account == account }, by: \.mailbox)
+            for (mailbox, msgs) in byMailbox {
+                do {
+                    let ok = Set(try await bridge.apply(.move(to: target), ids: msgs.map(\.messageId),
+                                                        mailbox: mailbox, account: account))
+                    moved += msgs.filter { ok.contains($0.messageId) }
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
+            }
+        }
+
+        let ids = Set(moved.map(\.id))
+        deletedIds.formUnion(ids)
+        allMessages.removeAll { ids.contains($0.id) }
+        selectedMessages.subtract(ids)
+        buildSenderGroups()
+        applyFilters()
+        store.delete(ids: Array(ids))
+        statusMessage = plan.missing.isEmpty
+            ? "\(moved.count) correos archivados"
+            : "\(moved.count) correos archivados · sin buzón de archivo en: \(plan.missing.joined(separator: ", "))"
+        isLoading = false
     }
 
     /// Opens the open message's unsubscribe link in the browser.
