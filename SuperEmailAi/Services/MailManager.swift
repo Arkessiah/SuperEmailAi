@@ -125,6 +125,12 @@ final class MailManager: ObservableObject {
         importantSenders = Set(UserDefaults.standard.stringArray(forKey: "importantSenders") ?? [])
         loadAutoReply()
         rules.load()
+        // A click on a native notification opens the mail, as a click on the bell's alert does.
+        SystemNotifier.shared.onOpenMessage = { [weak self] id in
+            guard let self, let message = self.alerts.first(where: { $0.id == id }) else { return }
+            self.dismissAlert(id)
+            Task { await self.openForReading(message) }
+        }
     }
 
     // MARK: - Alerts (incoming-mail monitor for important senders)
@@ -166,12 +172,17 @@ final class MailManager: ObservableObject {
                 seenAlertIDs.insert(m.id)
                 if importantSenders.contains(m.senderAddress) {
                     alerts.insert(m, at: 0)
+                    SystemNotifier.shared.post(.newMail(m))
                 }
                 await maybeAutoReply(to: m)
             }
         }
         if alerts.count > 50 { alerts = Array(alerts.prefix(50)) }
+        let shownNotices = Set(rules.notices.map(\.id))
         await rules.runCycle(fresh: fresh)
+        for notice in rules.notices where !shownNotices.contains(notice.id) {
+            SystemNotifier.shared.post(.pausedRule(notice))
+        }
     }
 
     /// Keeps the list and the index in step with what the rules just did in Mail.
