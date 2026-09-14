@@ -6,6 +6,11 @@ struct SuperEmailAiApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var mailManager = MailManager()
 
+    init() {
+        // Before MailManager reads its settings (SwiftUI creates it after this init).
+        PreferencesMigration.runIfNeeded()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -26,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        SystemNotifier.shared.start()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
