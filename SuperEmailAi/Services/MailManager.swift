@@ -148,6 +148,7 @@ final class MailManager: ObservableObject {
                 try? await Task.sleep(nanoseconds: 120 * 1_000_000_000)   // 2 min
                 if Task.isCancelled { break }
                 await self?.checkForAlerts()
+                await self?.syncThreads()
             }
         }
     }
@@ -600,8 +601,47 @@ final class MailManager: ObservableObject {
             }
             if Task.isCancelled { break }
         }
+        if !Task.isCancelled { await indexSentAndThreads(targets) }
         backfillStatus = nil
         backfillTask = nil
+    }
+
+    // MARK: - Sent mail and threads (ARK-209)
+
+    lazy var threads = ThreadIndexer(store: store, mail: bridge)
+    private var reportedMissingSent: Set<String> = []
+
+    /// Each 2-minute cycle: the latest sent mail, and thread headers of new mail (unless the
+    /// backfill is reading them already).
+    private func syncThreads() async {
+        reportMissingSent(await threads.syncRecentSent(accounts: accounts))
+        if backfillTask == nil { _ = await threads.fillThreadHeaders(accounts: accounts, limit: 50) }
+    }
+
+    /// After the INBOX history: the whole Sent history, then thread headers of the last 90 days.
+    /// The status bar says how long the Sent history took, so it can be measured.
+    private func indexSentAndThreads(_ targets: [MailAccount]) async {
+        let started = Date()
+        let indexed = await threads.backfillSent(accounts: targets) { [weak self] account, count in
+            self?.backfillStatus = "Indexando Enviados de \(account)… \(count)"
+        }
+        if indexed > 0 {
+            let seconds = Int(Date().timeIntervalSince(started))
+            let took = seconds < 60 ? "\(seconds) s" : "\(seconds / 60) min"
+            statusMessage = "Enviados indexados: \(indexed) correos en \(took)"
+        }
+        while !Task.isCancelled {
+            backfillStatus = "Leyendo hilos recientes…"
+            guard await threads.fillThreadHeaders(accounts: targets, limit: 100) > 0 else { break }
+            try? await Task.sleep(nanoseconds: 400_000_000)
+        }
+    }
+
+    private func reportMissingSent(_ missing: [String]) {
+        let new = missing.filter { !reportedMissingSent.contains($0) }
+        guard !new.isEmpty else { return }
+        reportedMissingSent.formUnion(new)
+        statusMessage = "Sin carpeta de enviados en \(new.joined(separator: ", ")): lo enviado desde ahí no se indexa"
     }
 
     /// Selects an account (nil = all accounts), refreshes its mailboxes and reloads.
