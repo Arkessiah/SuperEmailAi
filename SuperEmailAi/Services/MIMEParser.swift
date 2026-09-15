@@ -54,6 +54,36 @@ enum MIMEParser {
         return value.trimmingCharacters(in: .whitespaces)
     }
 
+    /// Message-ID, In-Reply-To and References of a header block (ARK-209), ids without `<>`.
+    static func threadHeaders(inHeaders headers: String) -> ThreadHeaders {
+        ThreadHeaders(messageId: messageIDs(in: headerValue("Message-ID", in: headers)).first,
+                      inReplyTo: messageIDs(in: headerValue("In-Reply-To", in: headers)).first,
+                      references: messageIDs(in: headerValue("References", in: headers)))
+    }
+
+    /// The `<…>` ids of a header value, without brackets and without repeats; bare ids
+    /// (with an @) when there are no brackets.
+    static func messageIDs(in value: String) -> [String] {
+        var ids: [String] = []
+        var rest = value[...]
+        while let open = rest.firstIndex(of: "<"), let close = rest[open...].firstIndex(of: ">") {
+            let id = rest[rest.index(after: open)..<close].trimmingCharacters(in: .whitespaces)
+            if !id.isEmpty, !ids.contains(id) { ids.append(id) }
+            rest = rest[rest.index(after: close)...]
+        }
+        if ids.isEmpty {
+            ids = value.split(whereSeparator: \.isWhitespace).map(String.init).filter { $0.contains("@") }
+        }
+        return ids
+    }
+
+    /// A Message-ID as Mail's `message id` property gives it, without brackets; nil when empty.
+    static func normalizedMessageID(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let id = raw.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "<>")))
+        return id.isEmpty ? nil : id
+    }
+
     /// Extracts the `List-Unsubscribe` header (the https URL and/or mailto), used
     /// to offer a one-click unsubscribe. Returns the first https URL and mailto found.
     static func listUnsubscribe(fromSource source: String) -> (https: URL?, mailto: String?) {

@@ -1,15 +1,19 @@
 import Foundation
 
-/// Finds an account's Archive / Trash among its real mailbox names (they vary by
+/// Finds an account's Archive / Trash / Sent among its real mailbox names (they vary by
 /// provider and language). Returns nil when none is found: the caller reports it.
 enum MailboxResolver {
     static let archiveNames = ["Archive", "Archivo", "Archivado", "Archived", "All Mail",
                                "[Gmail]/All Mail", "[Gmail]/Todos", "Todos"]
     static let trashNames = ["Trash", "Papelera", "Deleted Messages", "Deleted Items",
                              "Elementos eliminados", "[Gmail]/Trash", "[Gmail]/Papelera", "Bin"]
+    static let sentNames = ["Sent Messages", "Sent", "Enviados", "Mensajes enviados", "Sent Items",
+                            "Elementos enviados", "Sent Mail", "[Gmail]/Sent Mail", "[Gmail]/Enviados",
+                            "Correo enviado", "Enviado"]
 
     static func archive(in mailboxes: [String]) -> String? { first(of: archiveNames, in: mailboxes) }
     static func trash(in mailboxes: [String]) -> String? { first(of: trashNames, in: mailboxes) }
+    static func sent(in mailboxes: [String]) -> String? { first(of: sentNames, in: mailboxes) }
 
     /// Archive mailbox per account; accounts without one are reported in `missing` (sorted).
     static func archiveTargets(for accounts: Set<String>,
