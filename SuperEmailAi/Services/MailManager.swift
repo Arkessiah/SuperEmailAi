@@ -251,7 +251,10 @@ final class MailManager: ObservableObject {
               category(for: message) == .personas
         else { return }
 
-        guard autoReplyScope == .all || importantSenders.contains(message.senderAddress) else { return }
+        // «A todos» means people you have written to before, never a first-time sender (ARK-213).
+        guard AutoReplyPolicy.mayAnswer(scope: autoReplyScope,
+                                        isImportant: importantSenders.contains(message.senderAddress),
+                                        hasWrittenTo: store.hasWritten(to: message.senderAddress)) else { return }
 
         // The From is forgeable: answering bulk or automated mail causes backscatter
         // and auto-reply loops. Fail-safe: if the headers can't be read, don't reply.

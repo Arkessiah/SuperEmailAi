@@ -43,6 +43,10 @@ struct AutoReplyView: View {
             .pickerStyle(.segmented)
 
             VStack(alignment: .leading, spacing: 4) {
+                Label("«A todos» = tus importantes y quien ya haya recibido algún correo tuyo. Nunca a quien te escribe por primera vez.",
+                      systemImage: "person.2.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Label("Solo a personas reales — nunca a notificaciones, boletines, no-reply, listas de correo ni respuestas automáticas.",
                       systemImage: "checkmark.shield.fill")
                     .font(.caption)
