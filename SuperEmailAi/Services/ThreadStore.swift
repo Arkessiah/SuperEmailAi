@@ -87,4 +87,15 @@ extension MessageStore {
             return try MessageRecord.fetchAll(db, sql: sql, arguments: arguments)
         }) ?? []
     }
+
+    /// Synchronous backfill cursor update, for a backfill that reads it again before its next page.
+    func setBackfillCursorNow(account: String, mailbox: String, offset: Int, done: Bool) throws {
+        guard let dbQueue else { throw RuleStoreError.unavailable }
+        try dbQueue.write { db in
+            try db.execute(sql: """
+                INSERT INTO sync_state (key, backfillOffset, done) VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET backfillOffset = excluded.backfillOffset, done = excluded.done
+                """, arguments: ["\(account)|\(mailbox)", offset, done])
+        }
+    }
 }
