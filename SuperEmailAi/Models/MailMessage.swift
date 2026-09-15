@@ -12,6 +12,7 @@ struct MailMessage: Identifiable, Hashable, Codable {
     let account: String
     let messageId: Int
     var size: Int = 0   // bytes (0 if unknown)
+    var rfcMessageId: String? = nil   // Message-ID header without <> (ARK-209); nil if this read didn't bring it
 
     /// Human-readable size (KB/MB).
     var sizeText: String {

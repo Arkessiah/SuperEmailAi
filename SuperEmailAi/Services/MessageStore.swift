@@ -18,6 +18,7 @@ struct MessageRecord: Codable, FetchableRecord, PersistableRecord {
     var dateSent: Date
     var isRead: Bool
     var size: Int
+    var rfcMessageId: String?   // Message-ID without <> (ARK-209)
 
     init(_ m: MailMessage) {
         id = m.id
@@ -31,14 +32,31 @@ struct MessageRecord: Codable, FetchableRecord, PersistableRecord {
         dateSent = m.dateSent
         isRead = m.isRead
         size = m.size
+        rfcMessageId = m.rfcMessageId
     }
 
     func toMailMessage() -> MailMessage {
         MailMessage(
             id: id, subject: subject, sender: sender, senderAddress: senderAddress,
             dateSent: dateSent, dateReceived: dateReceived, isRead: isRead,
-            mailbox: mailbox, account: account, messageId: messageId, size: size
+            mailbox: mailbox, account: account, messageId: messageId, size: size, rfcMessageId: rfcMessageId
         )
+    }
+
+    /// Every column, except a missing Message-ID: a read that didn't bring one must not erase it.
+    func encode(to container: inout PersistenceContainer) {
+        container["id"] = id
+        container["account"] = account
+        container["mailbox"] = mailbox
+        container["messageId"] = messageId
+        container["sender"] = sender
+        container["senderAddress"] = senderAddress
+        container["subject"] = subject
+        container["dateReceived"] = dateReceived
+        container["dateSent"] = dateSent
+        container["isRead"] = isRead
+        container["size"] = size
+        if let rfcMessageId { container["rfcMessageId"] = rfcMessageId }
     }
 }
 
@@ -153,6 +171,24 @@ final class MessageStore: @unchecked Sendable {   // GRDB serializes database ac
                 t.column("checkedAt", .datetime).notNull()
                 t.column("unsubscribedAt", .datetime)
             }
+        }
+        // Sent mail and threads (ARK-209). `referenceIds` (not `references`, an SQL keyword):
+        // NULL = headers not read yet, "" = read and absent. Recipients are stored for sent mail.
+        migrator.registerMigration("threads_v1") { db in
+            try db.alter(table: "message") { t in
+                t.add(column: "rfcMessageId", .text)
+                t.add(column: "inReplyTo", .text)
+                t.add(column: "referenceIds", .text)
+            }
+            try db.create(index: "idx_message_rfc", on: "message", columns: ["rfcMessageId"])
+            try db.create(index: "idx_message_inreplyto", on: "message", columns: ["inReplyTo"])
+            try db.create(table: "message_recipient") { t in
+                t.column("messageRowId", .text).notNull().references("message", onDelete: .cascade)
+                t.column("address", .text).notNull()
+                t.column("kind", .text).notNull()   // "to" | "cc"
+                t.primaryKey(["messageRowId", "address", "kind"])
+            }
+            try db.create(index: "idx_recipient_address", on: "message_recipient", columns: ["address"])
         }
         return migrator
     }
