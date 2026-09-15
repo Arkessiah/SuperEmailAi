@@ -1,7 +1,7 @@
 import Foundation
 
 /// Settings saved while the app ran as a bare executable live in the preference domain named
-/// after the executable («SuperEmailAi», inferred). As a `.app` the domain is the bundle id, so
+/// after the executable («SuperEmailAi», checked on 2026-09-15). As a `.app` the domain is the bundle id, so
 /// the first bundled launch copies them over — only keys the app doesn't have yet, and without
 /// deleting the old domain. Must run before `MailManager` reads its settings.
 enum PreferencesMigration {
