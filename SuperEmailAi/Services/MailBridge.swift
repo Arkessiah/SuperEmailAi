@@ -32,11 +32,7 @@ final class MailBridge {
                 repeat with i from 1 to msgCount
                     set msg to item i of theMessages
                     try
-                        set msgSize to 0
-                        try
-                            set msgSize to message size of msg
-                        end try
-                        set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, "\(account)", msgSize}
+                        \(Self.recordScript(account: AppleScriptText.quoted(account)))
                     end try
                 end repeat
                 return msgList
@@ -59,11 +55,7 @@ final class MailBridge {
                         if collected > \(limit - 1) then exit repeat
                         set msg to item i of theMessages
                         try
-                            set msgSize to 0
-                            try
-                                set msgSize to message size of msg
-                            end try
-                            set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, accName, msgSize}
+                            \(Self.recordScript(account: "accName"))
                             set collected to collected + 1
                         end try
                     end repeat
@@ -96,11 +88,7 @@ final class MailBridge {
                 set theMessages to messages startI thru endI of theMailbox
                 repeat with msg in theMessages
                     try
-                        set msgSize to 0
-                        try
-                            set msgSize to message size of msg
-                        end try
-                        set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, "\(account)", msgSize}
+                        \(Self.recordScript(account: AppleScriptText.quoted(account)))
                     end try
                 end repeat
             end try
@@ -282,11 +270,7 @@ final class MailBridge {
                 end try
                 repeat with msg in theMessages
                     try
-                        set msgSize to 0
-                        try
-                            set msgSize to message size of msg
-                        end try
-                        set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, "\(account)", msgSize}
+                        \(Self.recordScript(account: AppleScriptText.quoted(account)))
                     end try
                 end repeat
                 return msgList
@@ -423,7 +407,8 @@ final class MailBridge {
         return [descriptor]
     }
 
-    /// Parses a list of message records: `{subject, sender, dateSent, dateReceived, read, id, accountName}`.
+    /// Parses a list of message records (see `recordScript`): `{subject, sender, dateSent,
+    /// dateReceived, read, id, accountName, size, Message-ID, …}`.
     private func parseMessages(from descriptor: NSAppleEventDescriptor, mailbox: String) -> [MailMessage] {
         var messages: [MailMessage] = []
 
@@ -438,6 +423,7 @@ final class MailBridge {
             let messageId = Int(record.atIndex(6)?.int32Value ?? 0)
             let account = record.numberOfItems >= 7 ? (record.atIndex(7)?.stringValue ?? "") : ""
             let size = record.numberOfItems >= 8 ? Int(record.atIndex(8)?.int32Value ?? 0) : 0
+            let rfcMessageId = record.numberOfItems >= 9 ? MIMEParser.normalizedMessageID(record.atIndex(9)?.stringValue) : nil
 
             let senderAddress = extractEmail(from: senderRaw)
             let senderName = extractName(from: senderRaw)
@@ -453,7 +439,8 @@ final class MailBridge {
                 mailbox: mailbox,
                 account: account,
                 messageId: messageId,
-                size: size
+                size: size,
+                rfcMessageId: rfcMessageId
             ))
         }
 
@@ -618,6 +605,86 @@ extension MailBridge: MailActions {
                 end try
             end repeat
             return okIds
+        end tell
+        """
+    }
+}
+
+// MARK: - Sent mail and thread headers (ARK-209)
+
+extension MailBridge: ThreadMailSource {
+    func fetchSent(mailbox: String, account: String, offset: Int, limit: Int) async throws -> [SentMessage] {
+        let result = try await runAppleScript(Self.sentRangeScript(mailbox: mailbox, account: account, offset: offset, limit: limit))
+        // Same records and same filter as parseMessages, so both lists line up.
+        let records = listItems(result).filter { $0.numberOfItems >= 6 }
+        return zip(records, parseMessages(from: result, mailbox: mailbox)).map { record, message in
+            SentMessage(message: message, to: addresses(record.atIndex(10)), cc: addresses(record.atIndex(11)))
+        }
+    }
+
+    func fetchAllHeaders(ids: [Int], mailbox: String, account: String) async throws -> [Int: String] {
+        guard !ids.isEmpty else { return [:] }
+        let result = try await runAppleScript(Self.allHeadersScript(ids: ids, mailbox: mailbox, account: account))
+        var out: [Int: String] = [:]
+        for pair in listItems(result) {
+            let parts = listItems(pair)
+            if parts.count == 2, let headers = parts[1].stringValue { out[Int(parts[0].int32Value)] = headers }
+        }
+        return out
+    }
+
+    private func addresses(_ descriptor: NSAppleEventDescriptor?) -> [String] {
+        listItems(descriptor).compactMap { $0.stringValue?.lowercased() }.filter { !$0.isEmpty }
+    }
+
+    /// One message record appended to `msgList` (read by `parseMessages`): subject, sender, dates,
+    /// read, id, account, size, Message-ID and, for sent mail, the To and Cc addresses. Delicate
+    /// fields get their own `try`, or one failure drops the whole message (`2c1f01e`).
+    static func recordScript(account: String, recipients: Bool = false) -> String {
+        var lines = ["set msgSize to 0", "try", "set msgSize to message size of msg", "end try",
+                     "set msgRFC to \"\"", "try", "set msgRFC to message id of msg", "end try"]
+        var fields = "subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, \(account), msgSize, msgRFC"
+        if recipients {
+            lines += ["set toList to {}", "try", "set toList to address of to recipients of msg", "end try",
+                      "set ccList to {}", "try", "set ccList to address of cc recipients of msg", "end try"]
+            fields += ", toList, ccList"
+        }
+        return (lines + ["set end of msgList to {\(fields)}"]).joined(separator: "\n")
+    }
+
+    static func sentRangeScript(mailbox: String, account: String, offset: Int, limit: Int) -> String {
+        let acc = AppleScriptText.quoted(account)
+        return """
+        tell application "Mail"
+            set msgList to {}
+            set theMailbox to mailbox \(AppleScriptText.quoted(mailbox)) of account \(acc)
+            set total to count of (messages of theMailbox)
+            set startI to \(offset + 1)
+            set endI to \(offset + limit)
+            if endI > total then set endI to total
+            if startI > endI then return {}
+            repeat with msg in (messages startI thru endI of theMailbox)
+                try
+                    \(recordScript(account: acc, recipients: true))
+                end try
+            end repeat
+            return msgList
+        end tell
+        """
+    }
+
+    static func allHeadersScript(ids: [Int], mailbox: String, account: String) -> String {
+        """
+        tell application "Mail"
+            set out to {}
+            set theMailbox to mailbox \(AppleScriptText.quoted(mailbox)) of account \(AppleScriptText.quoted(account))
+            repeat with theId in {\(ids.map(String.init).joined(separator: ", "))}
+                try
+                    set theMsg to (first message of theMailbox whose id is (theId as integer))
+                    set end of out to {(theId as integer), (all headers of theMsg)}
+                end try
+            end repeat
+            return out
         end tell
         """
     }
