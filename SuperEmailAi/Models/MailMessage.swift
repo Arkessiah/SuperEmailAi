@@ -41,7 +41,7 @@ struct MailMessage: Identifiable, Hashable, Codable {
         MailMessage(
             id: id, subject: subject, sender: sender, senderAddress: senderAddress,
             dateSent: dateSent, dateReceived: dateReceived, isRead: newValue,
-            mailbox: mailbox, account: account, messageId: messageId, size: size
+            mailbox: mailbox, account: account, messageId: messageId, size: size, rfcMessageId: rfcMessageId
         )
     }
 }

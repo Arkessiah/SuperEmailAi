@@ -199,15 +199,18 @@ final class MessageStore: @unchecked Sendable {   // GRDB serializes database ac
         try dbQueue.write { db in for m in messages { try MessageRecord(m).save(db) } }
     }
 
+    /// Queues a write, in order and off the main thread. These used to go to a concurrent
+    /// queue, where a delete could overtake the insert of the same message and leave a ghost.
+    private func writeLater(_ updates: @escaping (Database) throws -> Void) {
+        guard let dbQueue else { return }
+        dbQueue.asyncWrite(updates, completion: { _, _ in })
+    }
+
     /// Inserts or updates the given messages (by primary key). Runs off the main thread.
     func upsert(_ messages: [MailMessage]) {
-        guard let dbQueue, !messages.isEmpty else { return }
+        guard !messages.isEmpty else { return }
         let records = messages.map(MessageRecord.init)
-        DispatchQueue.global(qos: .utility).async {
-            try? dbQueue.write { db in
-                for record in records { try record.save(db) }
-            }
-        }
+        writeLater { db in for record in records { try record.save(db) } }
     }
 
     /// Total indexed messages (for verification / debugging).
@@ -221,20 +224,16 @@ final class MessageStore: @unchecked Sendable {   // GRDB serializes database ac
     /// Removes messages by primary key (exact deletes / moves). FTS stays in sync
     /// via the synchronized triggers.
     func delete(ids: [String]) {
-        guard let dbQueue, !ids.isEmpty else { return }
-        DispatchQueue.global(qos: .utility).async {
-            try? dbQueue.write { db in _ = try MessageRecord.deleteAll(db, keys: ids) }
-        }
+        guard !ids.isEmpty else { return }
+        writeLater { db in _ = try MessageRecord.deleteAll(db, keys: ids) }
     }
 
     /// Updates the read flag of indexed messages (rules marked them read in Mail).
     func setRead(ids: [String], _ read: Bool) {
-        guard let dbQueue, !ids.isEmpty else { return }
-        DispatchQueue.global(qos: .utility).async {
-            try? dbQueue.write { db in
-                for id in ids {
-                    try db.execute(sql: "UPDATE message SET isRead = ? WHERE id = ?", arguments: [read, id])
-                }
+        guard !ids.isEmpty else { return }
+        writeLater { db in
+            for id in ids {
+                try db.execute(sql: "UPDATE message SET isRead = ? WHERE id = ?", arguments: [read, id])
             }
         }
     }
@@ -242,14 +241,12 @@ final class MessageStore: @unchecked Sendable {   // GRDB serializes database ac
     /// Removes every indexed message from a given sender in a mailbox (used by
     /// "delete all from this sender").
     func deleteBySender(address: String, account: String, mailbox: String) {
-        guard let dbQueue, !address.isEmpty else { return }
-        DispatchQueue.global(qos: .utility).async {
-            try? dbQueue.write { db in
-                try db.execute(
-                    sql: "DELETE FROM message WHERE senderAddress = ? AND account = ? AND mailbox = ?",
-                    arguments: [address, account, mailbox]
-                )
-            }
+        guard !address.isEmpty else { return }
+        writeLater { db in
+            try db.execute(
+                sql: "DELETE FROM message WHERE senderAddress = ? AND account = ? AND mailbox = ?",
+                arguments: [address, account, mailbox]
+            )
         }
     }
 
@@ -257,14 +254,11 @@ final class MessageStore: @unchecked Sendable {   // GRDB serializes database ac
     /// predicate-based bulk cleanup re-syncs from Mail's current state (never
     /// leaves ghost rows). Refresh + backfill re-populate it.
     func clearMailbox(account: String, mailbox: String) {
-        guard let dbQueue else { return }
-        DispatchQueue.global(qos: .utility).async {
-            try? dbQueue.write { db in
-                try db.execute(sql: "DELETE FROM message WHERE account = ? AND mailbox = ?",
-                               arguments: [account, mailbox])
-                try db.execute(sql: "DELETE FROM sync_state WHERE key = ?",
-                               arguments: ["\(account)|\(mailbox)"])
-            }
+        writeLater { db in
+            try db.execute(sql: "DELETE FROM message WHERE account = ? AND mailbox = ?",
+                           arguments: [account, mailbox])
+            try db.execute(sql: "DELETE FROM sync_state WHERE key = ?",
+                           arguments: ["\(account)|\(mailbox)"])
         }
     }
 
@@ -284,16 +278,13 @@ final class MessageStore: @unchecked Sendable {   // GRDB serializes database ac
 
     /// Persists backfill progress for a view (fire-and-forget, off the main thread).
     func setBackfillCursor(account: String, mailbox: String, offset: Int, done: Bool) {
-        guard let dbQueue else { return }
         let key = "\(account)|\(mailbox)"
-        DispatchQueue.global(qos: .utility).async {
-            try? dbQueue.write { db in
-                try db.execute(sql: """
-                    INSERT INTO sync_state (key, backfillOffset, done) VALUES (?, ?, ?)
-                    ON CONFLICT(key) DO UPDATE SET
-                        backfillOffset = excluded.backfillOffset, done = excluded.done
-                    """, arguments: [key, offset, done])
-            }
+        writeLater { db in
+            try db.execute(sql: """
+                INSERT INTO sync_state (key, backfillOffset, done) VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    backfillOffset = excluded.backfillOffset, done = excluded.done
+                """, arguments: [key, offset, done])
         }
     }
 

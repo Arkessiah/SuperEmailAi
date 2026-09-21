@@ -14,7 +14,7 @@ enum MIMEParser {
 
     /// Extracts the `To:` recipients (addresses) from the raw source headers.
     static func recipients(fromSource source: String) -> [String] {
-        let value = headerValue("To", in: source)
+        let value = headerValue("To", in: headerBlock(of: source))
         guard !value.isEmpty else { return [] }
 
         var result: [String] = []
@@ -31,6 +31,13 @@ enum MIMEParser {
         }
         if result.isEmpty { result = [value] }
         return result
+    }
+
+    /// The header part of a raw message: everything before the first blank line.
+    static func headerBlock(of source: String) -> String {
+        let normalized = source.replacingOccurrences(of: "\r\n", with: "\n")
+        guard let blank = normalized.range(of: "\n\n") else { return normalized }
+        return String(normalized[..<blank.lowerBound]) + "\n"
     }
 
     /// Returns a header's value (joining folded continuation lines).
@@ -87,7 +94,8 @@ enum MIMEParser {
     /// Extracts the `List-Unsubscribe` header (the https URL and/or mailto), used
     /// to offer a one-click unsubscribe. Returns the first https URL and mailto found.
     static func listUnsubscribe(fromSource source: String) -> (https: URL?, mailto: String?) {
-        let normalized = source.replacingOccurrences(of: "\r\n", with: "\n")
+        // Headers only: a newsletter quoted or forwarded in the body must not mark its sender.
+        let normalized = headerBlock(of: source)
         guard let headerRange = normalized.range(of: "List-Unsubscribe:", options: .caseInsensitive) else {
             return (nil, nil)
         }
@@ -127,7 +135,7 @@ enum MIMEParser {
 
     static func unsubscribeOptions(fromSource source: String) -> UnsubscribeOptions {
         let found = listUnsubscribe(fromSource: source)
-        let post = headerValue("List-Unsubscribe-Post", in: source).lowercased()
+        let post = headerValue("List-Unsubscribe-Post", in: headerBlock(of: source)).lowercased()
             .replacingOccurrences(of: " ", with: "")
         let oneClick = found.https?.scheme?.lowercased() == "https" && post.contains("list-unsubscribe=one-click")
         return UnsubscribeOptions(link: found.https, mailto: found.mailto, oneClick: oneClick)

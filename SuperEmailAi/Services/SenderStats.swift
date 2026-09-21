@@ -67,8 +67,11 @@ extension MessageStore {
                 INSERT INTO sender_unsubscribe (senderAddress, link, mailto, oneClick, checkedAt)
                 VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(senderAddress) DO UPDATE SET
-                    link = excluded.link, mailto = excluded.mailto,
-                    oneClick = excluded.oneClick, checkedAt = excluded.checkedAt
+                    -- A read without unsubscribe headers must not erase what we already knew.
+                    link = CASE WHEN excluded.link IS NULL AND excluded.mailto IS NULL THEN link ELSE excluded.link END,
+                    mailto = CASE WHEN excluded.link IS NULL AND excluded.mailto IS NULL THEN mailto ELSE excluded.mailto END,
+                    oneClick = CASE WHEN excluded.link IS NULL AND excluded.mailto IS NULL THEN oneClick ELSE excluded.oneClick END,
+                    checkedAt = excluded.checkedAt
                 """, arguments: [sender, options.link?.absoluteString, options.mailto, options.oneClick, date])
         }
     }

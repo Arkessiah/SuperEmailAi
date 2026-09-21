@@ -135,6 +135,12 @@ final class RuleRunner: ObservableObject {
 
     /// Manual run over indexed history, after the user confirmed the count (no brake).
     func applyToExisting(_ rule: Rule) async -> Int {
+        guard !isRunning else {   // the 2-minute cycle is running: never act on the same mail twice
+            lastError = "Las reglas se están ejecutando ahora mismo; inténtalo en unos segundos"
+            return 0
+        }
+        isRunning = true
+        defer { isRunning = false }
         let hits = await matches(of: rule)
         let runs = await execute(hits.map { (rule, $0.1, $0.0) }, trigger: .manual)
         return runs.filter { $0.status == .ok }.count
