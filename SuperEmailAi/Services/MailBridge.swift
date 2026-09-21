@@ -19,25 +19,9 @@ final class MailBridge {
     func fetchMessages(from mailbox: String = "INBOX", account: String? = nil, limit: Int = 500) async throws -> [MailMessage] {
         let script: String
         if let account = account {
-            script = """
-            tell application "Mail"
-                set msgList to {}
-                try
-                    set theMessages to messages of mailbox "\(mailbox)" of account "\(account)"
-                on error
-                    set theMessages to {}
-                end try
-                set msgCount to count of theMessages
-                if msgCount > \(limit) then set msgCount to \(limit)
-                repeat with i from 1 to msgCount
-                    set msg to item i of theMessages
-                    try
-                        \(Self.recordScript(account: AppleScriptText.quoted(account)))
-                    end try
-                end repeat
-                return msgList
-            end tell
-            """
+            // Only the newest `limit` messages (not every reference in the mailbox), and Mail
+            // errors throw: the alerts monitor must never take a failed read for an empty INBOX.
+            script = Self.rangeScript(mailbox: mailbox, account: account, offset: 0, limit: limit, recipients: false)
         } else {
             script = """
             tell application "Mail"
@@ -46,7 +30,7 @@ final class MailBridge {
                 repeat with acc in accounts
                     set accName to name of acc
                     try
-                        set theMessages to messages of mailbox "\(mailbox)" of acc
+                        set theMessages to messages of mailbox \(AppleScriptText.quoted(mailbox)) of acc
                     on error
                         set theMessages to {}
                     end try
@@ -71,33 +55,11 @@ final class MailBridge {
     }
 
     /// Fetches a range of messages (for pagination): items `offset+1 ... offset+limit`
-    /// of one account's mailbox. Returns `[]` when the offset is past the end.
+    /// of one account's mailbox. Returns `[]` past the end; throws when Mail fails, so a
+    /// backfill never takes a failure for the end of the mailbox (ARK-217).
     func fetchMessagesRange(mailbox: String, account: String, offset: Int, limit: Int) async throws -> [MailMessage] {
-        let script = """
-        tell application "Mail"
-            set msgList to {}
-            try
-                set theMailbox to mailbox "\(mailbox)" of account "\(account)"
-                set total to count of (messages of theMailbox)
-                set startI to \(offset + 1)
-                set endI to \(offset + limit)
-                if endI > total then set endI to total
-                if startI > endI then
-                    return {}
-                end if
-                set theMessages to messages startI thru endI of theMailbox
-                repeat with msg in theMessages
-                    try
-                        \(Self.recordScript(account: AppleScriptText.quoted(account)))
-                    end try
-                end repeat
-            end try
-            return msgList
-        end tell
-        """
-
-        let descriptor = try await runAppleScript(script)
-        return parseMessages(from: descriptor, mailbox: mailbox)
+        let script = Self.rangeScript(mailbox: mailbox, account: account, offset: offset, limit: limit, recipients: false)
+        return parseMessages(from: try await runAppleScript(script), mailbox: mailbox)
     }
 
     // MARK: - Get all accounts and mailboxes
@@ -151,7 +113,7 @@ final class MailBridge {
         let script = """
         tell application "Mail"
             try
-                return count of (messages of mailbox "\(mailbox)" of account "\(account)" \(whoseClause))
+                return count of (messages of \(AppleScriptText.mailbox(mailbox, account: account)) \(whoseClause))
             on error
                 return -1
             end try
@@ -167,7 +129,7 @@ final class MailBridge {
         let whoseClause = predicate.isEmpty ? "" : "whose \(predicate)"
         let script = """
         tell application "Mail"
-            set theMatches to (messages of mailbox "\(mailbox)" of account "\(account)" \(whoseClause))
+            set theMatches to (messages of \(AppleScriptText.mailbox(mailbox, account: account)) \(whoseClause))
             set n to (count of theMatches)
             delete theMatches
             return n
@@ -181,7 +143,6 @@ final class MailBridge {
 
     func deleteMessages(ids: [Int], mailbox: String, account: String? = nil) async throws -> Int {
         guard !ids.isEmpty else { return 0 }
-        let accountFilter = account.map { "of account \"\($0)\"" } ?? ""
         let idList = ids.map(String.init).joined(separator: ", ")
 
         // Resolve each target by id with a `whose` filter (evaluated inside Mail)
@@ -189,7 +150,7 @@ final class MailBridge {
         let script = """
         tell application "Mail"
             set deletedCount to 0
-            set theMailbox to mailbox "\(mailbox)" \(accountFilter)
+            set theMailbox to \(AppleScriptText.mailbox(mailbox, account: account))
             repeat with theId in {\(idList)}
                 try
                     delete (first message of theMailbox whose id is (theId as integer))
@@ -208,13 +169,12 @@ final class MailBridge {
 
     func setReadStatus(ids: [Int], read: Bool, mailbox: String, account: String? = nil) async throws -> Int {
         guard !ids.isEmpty else { return 0 }
-        let accountFilter = account.map { "of account \"\($0)\"" } ?? ""
         let idList = ids.map(String.init).joined(separator: ", ")
 
         let script = """
         tell application "Mail"
             set changed to 0
-            set theMailbox to mailbox "\(mailbox)" \(accountFilter)
+            set theMailbox to \(AppleScriptText.mailbox(mailbox, account: account))
             repeat with theId in {\(idList)}
                 try
                     set read status of (first message of theMailbox whose id is (theId as integer)) to \(read)
@@ -233,14 +193,13 @@ final class MailBridge {
 
     func moveMessages(ids: [Int], fromMailbox: String, toMailbox: String, account: String? = nil) async throws -> Int {
         guard !ids.isEmpty else { return 0 }
-        let accountFilter = account.map { "of account \"\($0)\"" } ?? ""
         let idList = ids.map(String.init).joined(separator: ", ")
 
         let script = """
         tell application "Mail"
             set movedCount to 0
-            set targetMailbox to mailbox "\(toMailbox)" \(accountFilter)
-            set theMailbox to mailbox "\(fromMailbox)" \(accountFilter)
+            set targetMailbox to \(AppleScriptText.mailbox(toMailbox, account: account))
+            set theMailbox to \(AppleScriptText.mailbox(fromMailbox, account: account))
             repeat with theId in {\(idList)}
                 try
                     move (first message of theMailbox whose id is (theId as integer)) to targetMailbox
@@ -258,52 +217,51 @@ final class MailBridge {
     // MARK: - Search messages by sender address
 
     func searchBySender(address: String, mailbox: String = "INBOX", account: String? = nil) async throws -> [MailMessage] {
-        let script: String
-        if let account = account {
-            script = """
+        let script = Self.senderSearchScript(address: address, mailbox: mailbox, account: account)
+        return parseMessages(from: try await runAppleScript(script), mailbox: mailbox)
+    }
+
+    /// Messages whose sender contains `address`, in one account or in all of them. The address
+    /// can come from a received mail, so it is always escaped (ARK-218).
+    static func senderSearchScript(address: String, mailbox: String, account: String?) -> String {
+        let filter = "whose sender contains \(AppleScriptText.quoted(address))"
+        if let account {
+            return """
             tell application "Mail"
                 set msgList to {}
                 try
-                    set theMessages to (messages of mailbox "\(mailbox)" of account "\(account)" whose sender contains "\(address)")
+                    set theMessages to (messages of \(AppleScriptText.mailbox(mailbox, account: account)) \(filter))
                 on error
                     set theMessages to {}
                 end try
                 repeat with msg in theMessages
                     try
-                        \(Self.recordScript(account: AppleScriptText.quoted(account)))
+                        \(recordScript(account: AppleScriptText.quoted(account)))
                     end try
-                end repeat
-                return msgList
-            end tell
-            """
-        } else {
-            script = """
-            tell application "Mail"
-                set msgList to {}
-                repeat with acc in accounts
-                    set accName to name of acc
-                    try
-                        set theMessages to (messages of mailbox "\(mailbox)" of acc whose sender contains "\(address)")
-                    on error
-                        set theMessages to {}
-                    end try
-                    repeat with msg in theMessages
-                        try
-                            set msgSize to 0
-                            try
-                                set msgSize to message size of msg
-                            end try
-                            set end of msgList to {subject of msg, sender of msg, date sent of msg, date received of msg, read status of msg, id of msg, accName, msgSize}
-                        end try
-                    end repeat
                 end repeat
                 return msgList
             end tell
             """
         }
-
-        let descriptor = try await runAppleScript(script)
-        return parseMessages(from: descriptor, mailbox: mailbox)
+        return """
+        tell application "Mail"
+            set msgList to {}
+            repeat with acc in accounts
+                set accName to name of acc
+                try
+                    set theMessages to (messages of mailbox \(AppleScriptText.quoted(mailbox)) of acc \(filter))
+                on error
+                    set theMessages to {}
+                end try
+                repeat with msg in theMessages
+                    try
+                        \(recordScript(account: "accName"))
+                    end try
+                end repeat
+            end repeat
+            return msgList
+        end tell
+        """
     }
 
     // MARK: - Send a message (used by auto-reply)
@@ -333,10 +291,9 @@ final class MailBridge {
     // MARK: - Fetch a single message's body (plain text + raw source for HTML)
 
     func fetchMessageRaw(id: Int, mailbox: String, account: String? = nil) async throws -> (content: String, source: String, recipients: [String]) {
-        let accountFilter = account.map { "of account \"\($0)\"" } ?? ""
         let script = """
         tell application "Mail"
-            set theMessage to (first message of mailbox "\(mailbox)" \(accountFilter) whose id is \(id))
+            set theMessage to (first message of \(AppleScriptText.mailbox(mailbox, account: account)) whose id is \(id))
             set recipList to {}
             try
                 set recipList to (address of to recipients of theMessage)
@@ -356,10 +313,9 @@ final class MailBridge {
     // MARK: - Fetch a single message's headers (cheaper than the full source)
 
     func fetchHeaders(id: Int, mailbox: String, account: String? = nil) async throws -> String {
-        let accountFilter = account.map { "of account \"\($0)\"" } ?? ""
         let script = """
         tell application "Mail"
-            return all headers of (first message of mailbox "\(mailbox)" \(accountFilter) whose id is \(id))
+            return all headers of (first message of \(AppleScriptText.mailbox(mailbox, account: account)) whose id is \(id))
         end tell
         """
         return try await runAppleScript(script).stringValue ?? ""
@@ -614,7 +570,7 @@ extension MailBridge: MailActions {
 
 extension MailBridge: ThreadMailSource {
     func fetchSent(mailbox: String, account: String, offset: Int, limit: Int) async throws -> [SentMessage] {
-        let result = try await runAppleScript(Self.sentRangeScript(mailbox: mailbox, account: account, offset: offset, limit: limit))
+        let result = try await runAppleScript(Self.rangeScript(mailbox: mailbox, account: account, offset: offset, limit: limit, recipients: true))
         // Same records and same filter as parseMessages, so both lists line up.
         let records = listItems(result).filter { $0.numberOfItems >= 6 }
         return zip(records, parseMessages(from: result, mailbox: mailbox)).map { record, message in
@@ -652,12 +608,14 @@ extension MailBridge: ThreadMailSource {
         return (lines + ["set end of msgList to {\(fields)}"]).joined(separator: "\n")
     }
 
-    static func sentRangeScript(mailbox: String, account: String, offset: Int, limit: Int) -> String {
+    /// Messages `offset+1 … offset+limit` of a mailbox, newest first, optionally with recipients.
+    /// No `try` around the mailbox: a Mail failure must throw, not look like the end (ARK-217).
+    static func rangeScript(mailbox: String, account: String, offset: Int, limit: Int, recipients: Bool) -> String {
         let acc = AppleScriptText.quoted(account)
         return """
         tell application "Mail"
             set msgList to {}
-            set theMailbox to mailbox \(AppleScriptText.quoted(mailbox)) of account \(acc)
+            set theMailbox to \(AppleScriptText.mailbox(mailbox, account: account))
             set total to count of (messages of theMailbox)
             set startI to \(offset + 1)
             set endI to \(offset + limit)
@@ -665,7 +623,7 @@ extension MailBridge: ThreadMailSource {
             if startI > endI then return {}
             repeat with msg in (messages startI thru endI of theMailbox)
                 try
-                    \(recordScript(account: acc, recipients: true))
+                    \(recordScript(account: acc, recipients: recipients))
                 end try
             end repeat
             return msgList

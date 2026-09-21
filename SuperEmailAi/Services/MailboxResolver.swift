@@ -37,10 +37,17 @@ enum MailboxResolver {
 /// Safe AppleScript string literals: drops control characters, escapes `\` and `"`.
 enum AppleScriptText {
     static func quoted(_ s: String) -> String {
-        let kept = s.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }
+        // Only true control characters: `controlCharacters` also drops format ones such as the
+        // zero-width joiner, which would break mailbox names with composed emoji.
+        let kept = s.unicodeScalars.filter { $0.properties.generalCategory != .control }
         let text = String(String.UnicodeScalarView(kept))
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
         return "\"\(text)\""
+    }
+
+    /// `mailbox "Name" of account "Account"`, both escaped; without account when nil.
+    static func mailbox(_ name: String, account: String?) -> String {
+        "mailbox \(quoted(name))" + (account.map { " of account \(quoted($0))" } ?? "")
     }
 }
