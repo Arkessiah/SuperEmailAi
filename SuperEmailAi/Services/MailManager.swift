@@ -759,8 +759,16 @@ final class MailManager: ObservableObject {
 
     /// Optimistic delete: removes the messages from the UI immediately, then deletes them
     /// in Mail. Whatever Mail didn't delete comes back to the list and the index.
+    /// In the Trash, Mail's delete is permanent, so the app refuses (decision, 2026-09-21).
+    private func isTrash(_ mailbox: String) -> Bool { MailboxResolver.trash(in: [mailbox]) != nil }
+    static let trashRefusal = "No borro dentro de la Papelera: ahí el borrado es definitivo. Vacíala desde Mail."
+
     private func optimisticDelete(_ messages: [MailMessage], noun: String) async {
         guard !messages.isEmpty else { return }
+        guard !messages.contains(where: { isTrash($0.mailbox) }) else {
+            statusMessage = Self.trashRefusal
+            return
+        }
 
         let removedIds = Set(messages.map(\.id))
         deletedIds.formUnion(removedIds)
@@ -836,13 +844,19 @@ final class MailManager: ObservableObject {
     // MARK: - Duplicate detection
 
     func findDuplicates() {
-        let grouped = Dictionary(grouping: allMessages) { msg in
-            "\(msg.senderAddress)|\(msg.subject.lowercased().trimmingCharacters(in: .whitespaces))"
-        }
+        duplicateGroups = Self.duplicateGroups(in: allMessages)
+    }
 
-        duplicateGroups = grouped
-            .filter { $0.value.count > 1 }
-            .map { DuplicateGroup(subject: $0.value.first?.subject ?? "", sender: $0.value.first?.senderAddress ?? "", messages: $0.value) }
+    /// Real duplicates: the same Message-ID in the same account and mailbox, that is, the same
+    /// mail delivered twice. Same sender and subject isn't enough — monthly invoices or a «Re:»
+    /// thread would look duplicated (decision, 2026-09-21). Mail whose Message-ID hasn't been
+    /// read yet is left out rather than guessed.
+    nonisolated static func duplicateGroups(in messages: [MailMessage]) -> [DuplicateGroup] {
+        let identified = messages.filter { !($0.rfcMessageId ?? "").isEmpty }
+        return Dictionary(grouping: identified) { "\($0.account)\u{0001}\($0.mailbox)\u{0001}\($0.rfcMessageId ?? "")" }
+            .values
+            .filter { $0.count > 1 }
+            .map { DuplicateGroup(subject: $0.first?.subject ?? "", sender: $0.first?.senderAddress ?? "", messages: $0) }
             .sorted { $0.count > $1.count }
     }
 
@@ -1057,6 +1071,7 @@ final class MailManager: ObservableObject {
     func aiExecute(_ intent: AIIntent) async {
         guard !intent.isEmpty else { return }
         let pred = aiPredicate(intent)
+        guard !isTrash(currentMailbox) else { statusMessage = Self.trashRefusal; return }
         isLoading = true
         await stopBackfill()   // it would rewrite the cursors this cleanup clears
         statusMessage = "Aplicando instrucción…"
@@ -1126,6 +1141,7 @@ final class MailManager: ObservableObject {
     /// Executes the cleanup (moves matching messages to Trash) and reloads.
     func performCleanup(_ criteria: CleanupCriteria) async {
         let pred = predicate(for: criteria)
+        guard !isTrash(currentMailbox) else { statusMessage = Self.trashRefusal; return }
         isLoading = true
         await stopBackfill()   // it would rewrite the cursors this cleanup clears
         statusMessage = "Vaciando…"

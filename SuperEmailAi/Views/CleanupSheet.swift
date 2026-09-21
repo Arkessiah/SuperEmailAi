@@ -38,7 +38,7 @@ struct CleanupSheet: View {
                 Text("Llévame a cero")
                     .font(.title2.bold())
                 Text(inTrash
-                     ? "Borra para siempre los correos de \(scope) según estos criterios: estás en la Papelera."
+                     ? "Estás en la Papelera: ahí el borrado es definitivo, así que no se puede vaciar desde aquí. Hazlo desde Mail."
                      : "Mueve a la Papelera los correos de \(scope) según estos criterios.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -71,7 +71,7 @@ struct CleanupSheet: View {
                         .foregroundStyle(count == 0 ? .green : .red)
                     Text(count == 0
                          ? "Nada que mover con estos criterios"
-                         : inTrash ? "Se borrarán para siempre \(count) correos" : "Se moverán \(count) correos a la Papelera")
+                         : "Se moverán \(count) correos a la Papelera")
                         .font(.headline)
                 }
                 Spacer()
@@ -93,7 +93,7 @@ struct CleanupSheet: View {
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
                 // Only with a count for exactly these criteria: never act on a stale number.
-                .disabled((count ?? 0) == 0 || countedKey != refreshKey || isWorking || isCounting)
+                .disabled(inTrash || (count ?? 0) == 0 || countedKey != refreshKey || isWorking || isCounting)
             }
         }
         .padding(20)

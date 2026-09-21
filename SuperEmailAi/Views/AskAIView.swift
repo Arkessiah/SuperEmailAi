@@ -25,7 +25,7 @@ struct AskAIView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Label("Ask AI", systemImage: "sparkles").font(.title2.bold())
                 Text(MailboxResolver.trash(in: [manager.currentMailbox]) != nil
-                     ? "Escribe qué limpiar en \(scope). Estás en la Papelera: se borra para siempre."
+                     ? "Estás en la Papelera: ahí el borrado es definitivo, así que no se limpia desde aquí. Hazlo desde Mail."
                      : "Escribe qué limpiar en \(scope). Lo movido va a la Papelera.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -68,10 +68,7 @@ struct AskAIView: View {
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                             Label(
-                                count == 0 ? "Nada que mover"
-                                    : MailboxResolver.trash(in: [manager.currentMailbox]) != nil
-                                        ? "Se borrarán para siempre \(count) correos"
-                                        : "Se moverán \(count) correos a la Papelera",
+                                count == 0 ? "Nada que mover" : "Se moverán \(count) correos a la Papelera",
                                 systemImage: count == 0 ? "checkmark.circle" : "trash"
                             )
                             .font(.headline)

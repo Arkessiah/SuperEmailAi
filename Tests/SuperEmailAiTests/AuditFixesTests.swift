@@ -46,6 +46,35 @@ import Testing
     #expect(message.with(isRead: true).rfcMessageId == "abc@x")
 }
 
+// MARK: - Decisions of 2026-09-21
+
+@Test func onlyTheSameMessageIDCountsAsDuplicate() {
+    var first = msg(), second = msg(), other = msg()
+    first.rfcMessageId = "same@x"
+    second.rfcMessageId = "same@x"
+    other.rfcMessageId = "different@x"
+    #expect(MailManager.duplicateGroups(in: [first, second, other]).map(\.count) == [2])
+    // Same sender and subject but no Message-ID read: not treated as duplicates.
+    #expect(MailManager.duplicateGroups(in: [msg(), msg()]).isEmpty)
+}
+
+@Test func theAlwaysListObeysTheRulesScope() {
+    var rule = rule()
+    rule.conditions = [.accountIs("Trabajo")]
+    rule.alwaysSenders = [SenderEntry(address: "ana@example.com", origin: .manual)]
+    #expect(RuleEngine.evaluate(rule, msg(account: "iCloud"), ctx()) == nil)
+    #expect(RuleEngine.evaluate(rule, msg(account: "Trabajo"), ctx()) != nil)
+}
+
+@Test func timeDependentConditionsAreKnown() {
+    #expect(RuleCondition.olderThanDays(30).changesOverTime)
+    #expect(RuleCondition.isRead(true).changesOverTime)
+    #expect(RuleCondition.senderInNewsletters.changesOverTime)
+    #expect(!RuleCondition.subjectContains("factura").changesOverTime)
+    #expect(RuleCondition.accountIs("iCloud").isScope)
+    #expect(!RuleCondition.senderIs("a@x.com").isScope)
+}
+
 @Test func askAIRefusesCategoriesItCannotHonour() {
     // Without a sender, «boletines» would delete matching mail from every sender.
     #expect(MailManager.parseCommand("borra boletines de más de 6 meses no leídos").isEmpty)
