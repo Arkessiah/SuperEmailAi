@@ -59,11 +59,10 @@ import Testing
 }
 
 @Test func theAlwaysListObeysTheRulesScope() {
-    var rule = rule()
-    rule.conditions = [.accountIs("Trabajo")]
-    rule.alwaysSenders = [SenderEntry(address: "ana@example.com", origin: .manual)]
-    #expect(RuleEngine.evaluate(rule, msg(account: "iCloud"), ctx()) == nil)
-    #expect(RuleEngine.evaluate(rule, msg(account: "Trabajo"), ctx()) != nil)
+    var scoped = rule([.accountIs("Trabajo")])
+    scoped.alwaysSenders = [SenderEntry(address: "ana@example.com", origin: .manual)]
+    #expect(RuleEngine.evaluate(scoped, msg(account: "iCloud"), ctx()) == nil)
+    #expect(RuleEngine.evaluate(scoped, msg(account: "Trabajo"), ctx()) != nil)
 }
 
 @Test func timeDependentConditionsAreKnown() {
