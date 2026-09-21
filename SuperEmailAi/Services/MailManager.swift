@@ -23,7 +23,7 @@ final class MailManager: ObservableObject {
         case size = "Tamaño"
     }
 
-    @Published var searchText: String = "" { didSet { runIndexSearch() } }
+    @Published var searchText: String = "" { didSet { runIndexSearch(); applyFilters() } }
     @Published var searchResults: [MailMessage]? = nil   // global FTS results (nil = not searching)
     @Published var selectedSender: SenderGroup? = nil
     @Published var selectedMessages: Set<String> = []
@@ -137,11 +137,14 @@ final class MailManager: ObservableObject {
 
     @Published var alerts: [MailMessage] = []
     private var seenAlertIDs: Set<String> = []
+    private var baselinedAccounts: Set<String> = []   // accounts whose "already seen" list was read
+    private var monitorStartedAt = Date()
     private var alertsTask: Task<Void, Never>?
 
     /// Starts polling INBOX for new mail from important senders (in-app alerts).
     func startAlertsMonitor() {
         guard alertsTask == nil else { return }
+        monitorStartedAt = Date()
         alertsTask = Task { [weak self] in
             await self?.baselineSeenIDs()
             while !Task.isCancelled {
@@ -159,6 +162,7 @@ final class MailManager: ObservableObject {
         for account in accounts {
             if let recent = try? await bridge.fetchMessages(from: "INBOX", account: account.name, limit: 50) {
                 for m in recent { seenAlertIDs.insert(m.id) }
+                baselinedAccounts.insert(account.name)
             }
         }
     }
@@ -168,7 +172,14 @@ final class MailManager: ObservableObject {
         var fresh: [MailMessage] = []
         for account in accounts {
             guard let recent = try? await bridge.fetchMessages(from: "INBOX", account: account.name, limit: 50) else { continue }
-            fresh += recent
+            fresh += excludingDeleted(recent)
+            // No baseline yet (Mail failed at launch): this read becomes the baseline, instead of
+            // taking 50 old messages for new ones that would raise alerts and auto-replies.
+            guard baselinedAccounts.contains(account.name) else {
+                for m in recent { seenAlertIDs.insert(m.id) }
+                baselinedAccounts.insert(account.name)
+                continue
+            }
             for m in recent where !seenAlertIDs.contains(m.id) {
                 seenAlertIDs.insert(m.id)
                 if importantSenders.contains(m.senderAddress) {
@@ -243,6 +254,8 @@ final class MailManager: ObservableObject {
     /// notifications / newsletters / no-reply, nor to mailing lists, bulk mail,
     /// bounces or other auto-responders (header check, RFC 3834).
     private func maybeAutoReply(to message: MailMessage) async {
+        // Never answer mail that arrived before the monitor started: old mail isn't «new».
+        guard message.dateReceived >= monitorStartedAt.addingTimeInterval(-600) else { return }
         guard autoReplyEnabled,
               !autoReplyMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !message.senderAddress.isEmpty,
@@ -324,9 +337,10 @@ final class MailManager: ObservableObject {
     func loadMessages(limit: Int = 1000) async {
         errorMessage = nil
         canLoadMore = true
+        let view = viewKey
 
-        // Instant display from the SQLite index.
-        let indexed = store.recent(account: currentAccount, mailbox: currentMailbox, limit: 1000)
+        // Instant display from the SQLite index (minus what was deleted this session).
+        let indexed = excludingDeleted(store.recent(account: currentAccount, mailbox: currentMailbox, limit: 1000))
         if !indexed.isEmpty {
             allMessages = indexed
             buildSenderGroups()
@@ -342,29 +356,36 @@ final class MailManager: ObservableObject {
             await refresh(limit: limit, withProgress: true)
         }
 
+        guard viewKey == view else { return }   // a newer load owns these flags now
         isLoading = false
         isRefreshing = false
         loadProgress = nil
     }
 
+    /// Account and mailbox on screen. An async read that returns after a switch is indexed
+    /// but not shown: mixed into the new view, its ids would act on the wrong mailbox.
+    private var viewKey: String { "\(currentAccount ?? "")\u{0001}\(currentMailbox)" }
+
     /// Fetches the current view. For "all accounts" it streams account-by-account
     /// so messages appear progressively and `loadProgress` reflects real progress.
     private func refresh(limit: Int, withProgress: Bool) async {
+        let view = viewKey, mailbox = currentMailbox
         if let account = currentAccount {
-            if let raw = try? await bridge.fetchMessages(from: currentMailbox, account: account, limit: limit) {
+            if let raw = try? await bridge.fetchMessages(from: mailbox, account: account, limit: limit) {
                 let fresh = excludingDeleted(raw)
-                if currentMailbox == "INBOX" {
+                store.upsert(fresh)
+                if mailbox == "INBOX" {
                     unreadByAccount[account] = fresh.filter { !$0.isRead }.count
                 }
+                guard viewKey == view else { return }
                 if withProgress { allMessages = fresh } else { mergeFresh(fresh) }
                 buildSenderGroups()
                 applyFilters()
-                store.upsert(fresh)
                 statusMessage = "\(allMessages.count) correos"
-            } else if allMessages.isEmpty {
+            } else if allMessages.isEmpty, viewKey == view {
                 statusMessage = "Error al cargar"
             }
-            if withProgress { loadProgress = 1 }
+            if withProgress, viewKey == view { loadProgress = 1 }
             return
         }
 
@@ -373,13 +394,14 @@ final class MailManager: ObservableObject {
         let perAccount = 120
         var collected: [MailMessage] = []
         for (index, account) in targets.enumerated() {
-            if let raw = try? await bridge.fetchMessages(from: currentMailbox, account: account.name, limit: perAccount) {
+            if let raw = try? await bridge.fetchMessages(from: mailbox, account: account.name, limit: perAccount) {
                 let fresh = excludingDeleted(raw)
                 collected.append(contentsOf: fresh)
                 store.upsert(fresh)
-                if currentMailbox == "INBOX" {
+                if mailbox == "INBOX" {
                     unreadByAccount[account.name] = fresh.filter { !$0.isRead }.count
                 }
+                guard viewKey == view else { return }
                 // Only stream into the visible list when nothing is shown yet
                 // (no index/cache). Otherwise we merge once at the end to avoid
                 // the list collapsing and reordering ("things load and change").
@@ -389,6 +411,7 @@ final class MailManager: ObservableObject {
                     applyFilters()
                 }
             }
+            guard viewKey == view else { return }
             if withProgress {
                 loadProgress = Double(index + 1) / Double(targets.count)
                 statusMessage = "Cargando… \(collected.count) correos"
@@ -418,6 +441,8 @@ final class MailManager: ObservableObject {
     func loadMoreMessages(pageSize: Int = 100) async {
         guard !isLoadingMore, canLoadMore, !isLoading else { return }
         isLoadingMore = true
+        defer { isLoadingMore = false }
+        let view = viewKey, mailbox = currentMailbox
 
         let accountNames: [String] = currentAccount.map { [$0] } ?? accounts.map(\.name)
         let existing = Set(allMessages.map(\.id))
@@ -426,10 +451,11 @@ final class MailManager: ObservableObject {
         for accName in accountNames {
             let alreadyLoaded = allMessages.lazy.filter { $0.account == accName }.count
             if let more = try? await bridge.fetchMessagesRange(
-                mailbox: currentMailbox, account: accName, offset: alreadyLoaded, limit: pageSize
+                mailbox: mailbox, account: accName, offset: alreadyLoaded, limit: pageSize
             ) {
                 newMessages.append(contentsOf: excludingDeleted(more).filter { !existing.contains($0.id) })
             }
+            guard viewKey == view else { return }   // the user switched: this page belongs elsewhere
         }
 
         if newMessages.isEmpty {
@@ -441,8 +467,6 @@ final class MailManager: ObservableObject {
             store.upsert(newMessages)
             statusMessage = "\(allMessages.count) correos"
         }
-
-        isLoadingMore = false
     }
 
     // MARK: - Reading a message
@@ -477,16 +501,19 @@ final class MailManager: ObservableObject {
                 mailbox: message.mailbox,
                 account: account
             )
+            // What this message says about its sender holds whatever is open now.
+            let unsubscribe = MIMEParser.unsubscribeOptions(fromSource: raw.source)
+            try? store.saveUnsubscribeOptions(unsubscribe, for: message.senderAddress)   // for "Boletines"
+            let isNewsletter = unsubscribe.link != nil || unsubscribe.mailto != nil
+            if isNewsletter { rememberNewsletter(message.senderAddress) }
+            // Another message was opened while this one loaded: don't show this body under it.
+            guard openedMessage?.id == message.id else { return }
             openedBody = raw.content
             openedRecipients = raw.recipients.isEmpty ? MIMEParser.recipients(fromSource: raw.source) : raw.recipients
             openedHTML = MIMEParser.htmlBody(fromSource: raw.source)
-            let unsubscribe = MIMEParser.unsubscribeOptions(fromSource: raw.source)
-            try? store.saveUnsubscribeOptions(unsubscribe, for: message.senderAddress)   // for "Boletines"
-            if unsubscribe.link != nil || unsubscribe.mailto != nil {
-                openedUnsubscribe = unsubscribe
-                rememberNewsletter(message.senderAddress)
-            }
+            if isNewsletter { openedUnsubscribe = unsubscribe }
         } catch {
+            guard openedMessage?.id == message.id else { return }
             openedBody = "(No se pudo cargar el contenido: \(error.localizedDescription))"
         }
         isLoadingBody = false
@@ -572,6 +599,13 @@ final class MailManager: ObservableObject {
         backfillTask = Task { [weak self] in await self?.runBackfill() }
     }
 
+    /// Stops the backfill and waits for it, so it can't rewrite cursors a cleanup is clearing.
+    func stopBackfill() async {
+        backfillTask?.cancel()
+        await backfillTask?.value
+        backfillTask = nil
+    }
+
     private func runBackfill(mailbox: String = "INBOX", pageSize: Int = 200) async {
         let targets = currentAccount.map { name in accounts.filter { $0.name == name } } ?? accounts
         for account in targets {
@@ -579,9 +613,12 @@ final class MailManager: ObservableObject {
             if done { continue }
             var emptyRetries = 0
             while !Task.isCancelled {
-                let page = (try? await bridge.fetchMessagesRange(
-                    mailbox: mailbox, account: account.name, offset: offset, limit: pageSize
-                )) ?? []
+                let page: [MailMessage]
+                do {
+                    page = try await bridge.fetchMessagesRange(mailbox: mailbox, account: account.name, offset: offset, limit: pageSize)
+                } catch {
+                    break   // Mail failed: keep the cursor and resume on the next run, never mark done (ARK-217)
+                }
                 if page.isEmpty {
                     // Could be a transient AppleScript hiccup rather than the real
                     // end — retry once before declaring this account done.
@@ -594,7 +631,7 @@ final class MailManager: ObservableObject {
                     break
                 }
                 emptyRetries = 0
-                store.upsert(page)
+                store.upsert(excludingDeleted(page))
                 offset += page.count
                 let reachedEnd = page.count < pageSize
                 store.setBackfillCursor(account: account.name, mailbox: mailbox, offset: offset, done: reachedEnd)
@@ -695,41 +732,33 @@ final class MailManager: ObservableObject {
 
     // MARK: - Bridge helpers (group by real account + mailbox)
 
-    private static let targetSeparator = "\u{0001}"
-
-    /// Deletes the given messages, grouping them by their real account + mailbox
-    /// so each delete is correctly qualified `of account`.
-    private func bridgeDelete(_ messages: [MailMessage]) async throws -> Int {
-        let groups = Dictionary(grouping: messages) { "\($0.account)\(Self.targetSeparator)\($0.mailbox)" }
-        var total = 0
-        for (key, msgs) in groups {
-            let parts = key.components(separatedBy: Self.targetSeparator)
-            let account = parts.first.flatMap { $0.isEmpty ? nil : $0 }
-            let mailbox = parts.count > 1 ? parts[1] : currentMailbox
-            total += try await bridge.deleteMessages(ids: msgs.map(\.messageId), mailbox: mailbox, account: account)
+    /// Applies `op` in Mail to the given messages, grouped by their real account + mailbox,
+    /// and returns the ids (`MailMessage.id`) Mail confirmed. A failing group doesn't stop
+    /// the others; its error is returned for the status line.
+    private func bridgeApply(_ op: MailBridge.BridgeOp, to messages: [MailMessage]) async -> (done: Set<String>, error: Error?) {
+        var done: Set<String> = []
+        var lastError: Error?
+        for group in Dictionary(grouping: messages, by: { "\($0.account)\u{0001}\($0.mailbox)" }).values {
+            guard let first = group.first, !first.account.isEmpty else { continue }
+            do {
+                let ok = Set(try await bridge.apply(op, ids: group.map(\.messageId), mailbox: first.mailbox, account: first.account))
+                done.formUnion(group.filter { ok.contains($0.messageId) }.map(\.id))
+            } catch {
+                lastError = error
+            }
         }
-        return total
-    }
-
-    /// Moves the given messages to `targetMailbox`, grouping by their real
-    /// account + mailbox. The target is resolved within each source account.
-    private func bridgeMove(_ messages: [MailMessage], to targetMailbox: String) async throws -> Int {
-        let groups = Dictionary(grouping: messages) { "\($0.account)\(Self.targetSeparator)\($0.mailbox)" }
-        var total = 0
-        for (key, msgs) in groups {
-            let parts = key.components(separatedBy: Self.targetSeparator)
-            let account = parts.first.flatMap { $0.isEmpty ? nil : $0 }
-            let mailbox = parts.count > 1 ? parts[1] : currentMailbox
-            total += try await bridge.moveMessages(ids: msgs.map(\.messageId), fromMailbox: mailbox, toMailbox: targetMailbox, account: account)
-        }
-        return total
+        return (done, lastError)
     }
 
     // MARK: - Delete messages
 
-    /// Optimistic delete: removes the messages from the UI immediately, then
-    /// deletes them in Mail in the background. On failure it reloads to resync
-    /// with Mail's real state (the actual deletion may be slow over IMAP).
+    /// Deletes exactly these messages (what the confirmation showed).
+    func deleteMessages(_ messages: [MailMessage]) async {
+        await optimisticDelete(messages, noun: "correos")
+    }
+
+    /// Optimistic delete: removes the messages from the UI immediately, then deletes them
+    /// in Mail. Whatever Mail didn't delete comes back to the list and the index.
     private func optimisticDelete(_ messages: [MailMessage], noun: String) async {
         guard !messages.isEmpty else { return }
 
@@ -743,14 +772,23 @@ final class MailManager: ObservableObject {
         store.delete(ids: Array(removedIds))
         statusMessage = "Eliminando \(messages.count) \(noun) en segundo plano..."
 
-        do {
-            let count = try await bridgeDelete(messages)
-            statusMessage = "\(count) \(noun) eliminados"
-        } catch {
-            errorMessage = error.localizedDescription
-            statusMessage = "Error al eliminar — recargando..."
-            await loadMessages()
+        let result = await bridgeApply(.delete, to: messages)
+        let failed = messages.filter { !result.done.contains($0.id) }
+        guard !failed.isEmpty else {
+            statusMessage = "\(messages.count) \(noun) eliminados"
+            return
         }
+        deletedIds.subtract(failed.map(\.id))
+        let shown = Set(allMessages.map(\.id))
+        allMessages.append(contentsOf: failed.filter {
+            !shown.contains($0.id) && $0.mailbox == currentMailbox && (currentAccount == nil || $0.account == currentAccount)
+        })
+        buildSenderGroups()
+        applyFilters()
+        findDuplicates()
+        store.upsert(failed)
+        if let error = result.error { errorMessage = error.localizedDescription }
+        statusMessage = "\(messages.count - failed.count) \(noun) eliminados · \(failed.count) no se pudieron eliminar"
     }
 
     func deleteSelectedMessages() async {
@@ -769,43 +807,29 @@ final class MailManager: ObservableObject {
         guard !selectedMessages.isEmpty else { return }
 
         let toMove = allMessages.filter { selectedMessages.contains($0.id) }
-
-        isLoading = true
-        statusMessage = "Moviendo \(toMove.count) correos a \(targetMailbox)..."
-
-        do {
-            let count = try await bridgeMove(toMove, to: targetMailbox)
-            statusMessage = "\(count) correos movidos a \(targetMailbox)"
-            deletedIds.formUnion(toMove.map(\.id))
-            allMessages.removeAll { selectedMessages.contains($0.id) }
-            selectedMessages.removeAll()
-            buildSenderGroups()
-            applyFilters()
-            store.delete(ids: toMove.map(\.id))
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-
-        isLoading = false
+        await move(toMove, to: targetMailbox, label: "\(toMove.count) correos")
     }
 
     func moveMessagesFromSender(_ sender: SenderGroup, to targetMailbox: String) async {
+        await move(sender.messages, to: targetMailbox, label: "\(sender.messages.count) correos de \(sender.displayName)")
+    }
+
+    /// Moves in Mail; only what Mail confirmed moved leaves the list and the index.
+    private func move(_ messages: [MailMessage], to targetMailbox: String, label: String) async {
         isLoading = true
-        statusMessage = "Moviendo \(sender.messages.count) correos de \(sender.displayName) a \(targetMailbox)..."
-
-        do {
-            let count = try await bridgeMove(sender.messages, to: targetMailbox)
-            statusMessage = "\(count) correos movidos"
-            let idsToRemove = Set(sender.messages.map(\.id))
-            deletedIds.formUnion(idsToRemove)
-            allMessages.removeAll { idsToRemove.contains($0.id) }
-            buildSenderGroups()
-            applyFilters()
-            store.delete(ids: Array(idsToRemove))
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-
+        statusMessage = "Moviendo \(label) a \(targetMailbox)..."
+        let result = await bridgeApply(.move(to: targetMailbox), to: messages)
+        deletedIds.formUnion(result.done)
+        allMessages.removeAll { result.done.contains($0.id) }
+        selectedMessages.subtract(result.done)
+        buildSenderGroups()
+        applyFilters()
+        store.delete(ids: Array(result.done))
+        let failed = messages.count - result.done.count
+        statusMessage = failed == 0
+            ? "\(result.done.count) correos movidos a \(targetMailbox)"
+            : "\(result.done.count) correos movidos a \(targetMailbox) · \(failed) no se pudieron mover"
+        if let error = result.error { errorMessage = error.localizedDescription }
         isLoading = false
     }
 
@@ -916,21 +940,13 @@ final class MailManager: ObservableObject {
         }
     }
 
-    /// Deletes every message from the open message's sender in its mailbox.
-    func deleteAllFromOpenedSender() async {
-        guard let msg = openedMessage, !msg.senderAddress.isEmpty,
-              !msg.account.isEmpty else { return }
-        isLoading = true
-        statusMessage = "Eliminando todos los correos de \(msg.senderAddress)…"
-        let predicate = "sender contains \"\(escapeForAppleScript(msg.senderAddress))\""
-        let total = (try? await bridge.bulkDelete(mailbox: msg.mailbox, account: msg.account, predicate: predicate)) ?? 0
-        allMessages.removeAll { $0.senderAddress == msg.senderAddress }
-        buildSenderGroups()
-        applyFilters()
-        store.deleteBySender(address: msg.senderAddress, account: msg.account, mailbox: msg.mailbox)
-        statusMessage = "\(total) correos de \(msg.senderAddress) eliminados"
-        closeReading()
-        isLoading = false
+    /// Mail from exactly the open message's sender, in its account and mailbox, to show in the
+    /// delete confirmation. Mail's `sender contains` would also catch juana@ for ana@, so the
+    /// address is compared exactly here.
+    func messagesFromOpenedSender() async -> [MailMessage] {
+        guard let msg = openedMessage, !msg.senderAddress.isEmpty, !msg.account.isEmpty else { return [] }
+        let found = (try? await bridge.searchBySender(address: msg.senderAddress, mailbox: msg.mailbox, account: msg.account)) ?? []
+        return excludingDeleted(found).filter { $0.senderAddress == msg.senderAddress }
     }
 
     // MARK: - Ask AI (rule-based natural-language cleanup, v1)
@@ -957,7 +973,10 @@ final class MailManager: ObservableObject {
     }
 
     /// Parses a free-text instruction into a cleanup intent (Spanish + English).
-    func parseAICommand(_ raw: String) -> AIIntent {
+    func parseAICommand(_ raw: String) -> AIIntent { Self.parseCommand(raw) }
+
+    /// The parser itself: no state, so it can be tested.
+    nonisolated static func parseCommand(_ raw: String) -> AIIntent {
         let text = raw.lowercased()
         var intent = AIIntent()
 
@@ -974,6 +993,12 @@ final class MailManager: ObservableObject {
             }
         }
 
+        // Categories this parser can't honour: without a sender, «borra boletines…» would delete
+        // matching mail from every sender. Better not understood than far too broad.
+        let categories = ["boletin", "boletín", "newsletter", "notificacion", "notificación", "promocion",
+                          "promoción", "publicidad", "spam", "suscripcion", "suscripción"]
+        if intent.senderContains.isEmpty, categories.contains(where: text.contains) { return AIIntent() }
+
         intent.olderThanDays = parseAge(from: text)
 
         let unreadCues = ["no leído", "no leido", "no abierto", "sin leer", "sin abrir", "unread", "not read"]
@@ -987,7 +1012,7 @@ final class MailManager: ObservableObject {
         return intent
     }
 
-    private func parseAge(from text: String) -> Int? {
+    nonisolated private static func parseAge(from text: String) -> Int? {
         let normalized = text.replacingOccurrences(of: "ñ", with: "n")
         let words = normalized.components(separatedBy: CharacterSet(charactersIn: " \t\n,;"))
         func unitDays(_ w: String) -> Int? {
@@ -1033,6 +1058,7 @@ final class MailManager: ObservableObject {
         guard !intent.isEmpty else { return }
         let pred = aiPredicate(intent)
         isLoading = true
+        await stopBackfill()   // it would rewrite the cursors this cleanup clears
         statusMessage = "Aplicando instrucción…"
         var total = 0
         for account in cleanupAccountNames() {
@@ -1101,6 +1127,7 @@ final class MailManager: ObservableObject {
     func performCleanup(_ criteria: CleanupCriteria) async {
         let pred = predicate(for: criteria)
         isLoading = true
+        await stopBackfill()   // it would rewrite the cursors this cleanup clears
         statusMessage = "Vaciando…"
 
         var total = 0

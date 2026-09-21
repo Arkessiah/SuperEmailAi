@@ -13,6 +13,7 @@ struct CleanupSheet: View {
     @State private var count: Int?
     @State private var isCounting = false
     @State private var isWorking = false
+    @State private var countedKey: String?   // criteria the shown count belongs to
 
     private let ageOptions: [(label: String, days: Int?)] = [
         ("Cualquier antigüedad", nil),
@@ -36,7 +37,9 @@ struct CleanupSheet: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Llévame a cero")
                     .font(.title2.bold())
-                Text("Mueve a la Papelera los correos de \(scope) según estos criterios.")
+                Text(inTrash
+                     ? "Borra para siempre los correos de \(scope) según estos criterios: estás en la Papelera."
+                     : "Mueve a la Papelera los correos de \(scope) según estos criterios.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -68,7 +71,7 @@ struct CleanupSheet: View {
                         .foregroundStyle(count == 0 ? .green : .red)
                     Text(count == 0
                          ? "Nada que mover con estos criterios"
-                         : "Se moverán \(count) correos a la Papelera")
+                         : inTrash ? "Se borrarán para siempre \(count) correos" : "Se moverán \(count) correos a la Papelera")
                         .font(.headline)
                 }
                 Spacer()
@@ -89,13 +92,17 @@ struct CleanupSheet: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
-                .disabled((count ?? 0) == 0 || isWorking || isCounting)
+                // Only with a count for exactly these criteria: never act on a stale number.
+                .disabled((count ?? 0) == 0 || countedKey != refreshKey || isWorking || isCounting)
             }
         }
         .padding(20)
         .frame(width: 440)
         .task(id: refreshKey) { await recount() }
+        .onChange(of: refreshKey) { count = nil; countedKey = nil }
     }
+
+    private var inTrash: Bool { MailboxResolver.trash(in: [manager.currentMailbox]) != nil }
 
     private var scope: String {
         if let account = manager.currentAccount {
@@ -107,11 +114,15 @@ struct CleanupSheet: View {
     private var refreshKey: String { "\(senderContains)-\(ageIndex)-\(keepUnread)-\(keepFlagged)" }
 
     private func recount() async {
+        let key = refreshKey
         // Debounce: a new keystroke cancels this task before the count runs.
         try? await Task.sleep(nanoseconds: 400_000_000)
         if Task.isCancelled { return }
         isCounting = true
-        count = await manager.cleanupCount(criteria)
+        let counted = await manager.cleanupCount(criteria)
         isCounting = false
+        guard !Task.isCancelled, key == refreshKey else { return }   // criteria changed meanwhile
+        count = counted
+        countedKey = key
     }
 }

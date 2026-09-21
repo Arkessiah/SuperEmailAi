@@ -56,7 +56,8 @@ struct MessageListView: View {
         }
         .sheet(isPresented: $showDeleteConfirmation) {
             DeleteConfirmationView(messages: messagesToDelete) {
-                Task { await manager.deleteSelectedMessages() }
+                let mail = messagesToDelete   // exactly what the confirmation listed
+                Task { await manager.deleteMessages(mail) }
             }
         }
     }
@@ -367,6 +368,8 @@ struct BulkActionButtons: View {
 
 struct MessageDetailPane: View {
     @EnvironmentObject var manager: MailManager
+    @State private var senderMail: [MailMessage] = []
+    @State private var confirmSenderDelete = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -427,12 +430,25 @@ struct MessageDetailPane: View {
                                                    : "Este boletín no admite baja en un clic")
                     }
                     Button(role: .destructive) {
-                        Task { await manager.deleteAllFromOpenedSender() }
+                        Task {
+                            senderMail = await manager.messagesFromOpenedSender()
+                            if senderMail.isEmpty {
+                                manager.statusMessage = "No encuentro correos de este remitente en este buzón"
+                            } else {
+                                confirmSenderDelete = true
+                            }
+                        }
                     } label: {
                         Label("Borrar todos de este remitente", systemImage: "trash").font(.caption)
                     }
                     .buttonStyle(.bordered)
                     .tint(.red)
+                    .sheet(isPresented: $confirmSenderDelete) {
+                        DeleteConfirmationView(messages: senderMail) {
+                            let mail = senderMail
+                            Task { await manager.deleteMessages(mail); manager.closeReading() }
+                        }
+                    }
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
