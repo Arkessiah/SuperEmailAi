@@ -18,16 +18,24 @@ enum RuleEngine {
     /// Order: "never" → "always" → conditions. A move rule only applies to its account.
     static func evaluate(_ rule: Rule, _ m: MailMessage, _ ctx: RuleContext) -> RuleMatch? {
         if case .move(let account, _) = rule.action, account != m.account { return nil }
+        // Account and mailbox are the rule's scope: they bind even the «siempre» list.
+        let scope = rule.conditions.filter(\.isScope)
+        guard scope.allSatisfy({ holds($0, m, ctx) }) else { return nil }
+
         let sender = m.senderAddress.lowercased()
         if rule.neverSenders.contains(where: { $0.address.lowercased() == sender }) { return nil }
         if rule.alwaysSenders.contains(where: { $0.address.lowercased() == sender }) {
             return RuleMatch(ruleId: rule.id, reason: "\(m.senderAddress) está en «siempre»")
         }
         guard !rule.conditions.isEmpty else { return nil }
-        let results = rule.conditions.map { ($0, holds($0, m, ctx)) }
+        let rest = rule.conditions.filter { !$0.isScope }
+        guard !rest.isEmpty else {
+            return RuleMatch(ruleId: rule.id, reason: scope.map(describe).joined(separator: " y "))
+        }
+        let results = rest.map { ($0, holds($0, m, ctx)) }
         let ok = rule.matchMode == .all ? results.allSatisfy(\.1) : results.contains(where: \.1)
         guard ok else { return nil }
-        let reason = results.filter(\.1).map { describe($0.0) }.joined(separator: " y ")
+        let reason = (scope + results.filter(\.1).map(\.0)).map(describe).joined(separator: " y ")
         return RuleMatch(ruleId: rule.id, reason: reason)
     }
 

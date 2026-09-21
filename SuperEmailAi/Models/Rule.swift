@@ -45,6 +45,26 @@ enum RuleCondition: Codable, Equatable {
     case senderInNewsletters
 }
 
+extension RuleCondition {
+    /// Account and mailbox bind the whole rule: they are its scope, not one more alternative,
+    /// and the «siempre» list obeys them too (decision, 2026-09-21).
+    var isScope: Bool {
+        switch self {
+        case .accountIs, .mailboxIs: true
+        default: false
+        }
+    }
+
+    /// Conditions whose answer can change after the mail arrived, so a message that didn't
+    /// match today may match tomorrow and has to be looked at again.
+    var changesOverTime: Bool {
+        switch self {
+        case .olderThanDays, .newerThanDays, .isRead, .senderInImportant, .senderInNewsletters: true
+        default: false
+        }
+    }
+}
+
 enum RuleAction: Codable, Equatable {
     case move(account: String, mailbox: String)
     case archive

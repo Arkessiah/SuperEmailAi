@@ -167,7 +167,13 @@ final class RuleRunner: ObservableObject {
 
         let active = rules.filter { $0.isEnabled && $0.pausedReason == nil && $0.enabledAt != nil }
         guard let earliest = active.compactMap(\.enabledAt).min() else { return }
-        let since = max(earliest, now.addingTimeInterval(-Self.candidateWindow))
+        // The window has to reach past the oldest «más de N días» in play, or that rule would
+        // never see a message old enough to match (decision, 2026-09-21).
+        let oldest = active.flatMap(\.conditions).compactMap { condition -> Int? in
+            if case .olderThanDays(let n) = condition { return n } else { return nil }
+        }.max()
+        let window = max(Self.candidateWindow, Double((oldest ?? 0) + 2) * 86_400)
+        let since = max(earliest, now.addingTimeInterval(-window))
         let candidates = (try? store.unprocessedInbox(since: since, limit: 1_000)) ?? []
         let ctx = context()
 
@@ -181,7 +187,10 @@ final class RuleRunner: ObservableObject {
                 unmatched.append(RuleEngine.stableKey(m))
             }
         }
-        try? store.markProcessed(unmatched, at: now)
+        // Only mail that can't start matching later is closed off; with time-dependent
+        // conditions in play everything stays open for the next cycles.
+        let recheck = active.contains { $0.conditions.contains(where: \.changesOverTime) }
+        try? store.markProcessed(recheck ? [] : unmatched, at: now)
 
         let braked = RuleEngine.brakedRules(planned.map { ($0.0, $0.2) }, limit: Self.brakeLimit)
             .subtracting(bypassBrakeOnce)
