@@ -88,14 +88,18 @@ final class ThreadIndexer {
     /// Returns how many it stored.
     func fillThreadHeaders(accounts: [MailAccount], limit: Int, now: Date = Date()) async -> Int {
         let boxes = Self.sentMailboxes(of: accounts).found + accounts.map { (account: $0.name, mailbox: "INBOX") }
-        let pending = store.needingThreadHeaders(in: boxes, since: now.addingTimeInterval(-Self.headerWindow), limit: limit)
+        guard !boxes.isEmpty else { return 0 }
+        let since = now.addingTimeInterval(-Self.headerWindow)
+        // A share each: a mailbox whose headers always fail would otherwise take the whole limit
+        // every cycle and the rest would never advance.
+        let share = max(1, limit / boxes.count)
         var stored = 0
-        for rows in Dictionary(grouping: pending, by: { "\($0.account)|\($0.mailbox)" }).values {
+        for box in boxes {
+            let rows = store.needingThreadHeaders(in: [box], since: since, limit: share)
             for start in stride(from: 0, to: rows.count, by: Self.headerBatch) {
                 let batch = Array(rows[start..<min(start + Self.headerBatch, rows.count)])
-                guard let first = batch.first,
-                      let headers = try? await mail.fetchAllHeaders(ids: batch.map(\.messageId), mailbox: first.mailbox,
-                                                                   account: first.account) else { continue }
+                guard let headers = try? await mail.fetchAllHeaders(ids: batch.map(\.messageId), mailbox: box.mailbox,
+                                                                   account: box.account) else { continue }
                 var parsed: [String: ThreadHeaders] = [:]
                 for row in batch {
                     parsed[row.id] = headers[row.messageId].map(MIMEParser.threadHeaders(inHeaders:))
