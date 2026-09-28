@@ -192,9 +192,14 @@ private func summaryTalksAboutTheMail(sample: Sample) async throws {
                      "marca como leídos los avisos de notificaciones@ejemplo.com",
                      "archiva lo que pese más de 5 MB y tenga más de un año"]
 
+    let ways: [(name: String, build: (String, [String], [String]) async throws -> Rule)] = [
+        ("un tiro   ", { try await ai.ruleInOneGo(from: $0, accounts: $1, mailboxes: $2) }),
+        ("entrevista", { try await ai.rule(from: $0, accounts: $1, mailboxes: $2) }),
+    ]
+
     for sentence in sentences {
         print("· «\(sentence)»")
-        for (name, build) in [("un tiro    ", ai.ruleInOneGo), ("entrevista ", ai.rule)] {
+        for (name, build) in ways {
             let started = Date()
             do {
                 let rule = try await build(sentence, accounts, mailboxes)

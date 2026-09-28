@@ -1126,6 +1126,31 @@ final class MailManager: ObservableObject {
         currentAccount.map { [$0] } ?? accounts.map(\.name)
     }
 
+    // MARK: - Rules written in plain Spanish (ARK-208)
+
+    /// The AI's tasks. Views go through here, the same way they never talk to the bridge directly.
+    lazy var ai: MailAI = MailAI(model: ModelEngine.best())
+
+    /// Whether this Mac can use the AI, and why not when it can't.
+    var aiAvailability: ModelAvailability { ai.availability }
+
+    /// Turns a sentence into a rule for the user to review. It is born switched off, and limited to
+    /// the account and mailbox they were looking at when they typed it (decision, 2026-09-28):
+    /// narrower is safer, and the editor opens straight after so it can be widened.
+    func proposeRule(from instruction: String) async throws -> Rule {
+        try await ai.rule(from: instruction,
+                          accounts: accounts.map(\.name),
+                          mailboxes: mailboxes,
+                          scope: ruleScope())
+    }
+
+    private func ruleScope() -> [RuleCondition] {
+        var scope: [RuleCondition] = []
+        if let account = currentAccount, !account.isEmpty { scope.append(.accountIs(account)) }
+        if !currentMailbox.isEmpty { scope.append(.mailboxIs(currentMailbox)) }
+        return scope
+    }
+
     /// Counts how many messages the cleanup would move to Trash from the current
     /// mailbox (across the current account, or all accounts when none selected).
     func cleanupCount(_ criteria: CleanupCriteria) async -> Int {

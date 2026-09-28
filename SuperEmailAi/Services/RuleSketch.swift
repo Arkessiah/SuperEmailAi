@@ -100,7 +100,7 @@ struct RuleSketch: Equatable {
     /// «de más de 30 días» and «de la última semana» are opposite conditions built from the same
     /// number and unit, so the direction is read separately from the amount.
     private static func ageCondition(in text: String) -> Candidate? {
-        guard let (days, words) = amount(in: text, units: ageUnits) else { return nil }
+        guard let (days, _) = amount(in: text, units: ageUnits) else { return nil }
         let newer = newerCues.contains { text.contains($0) }
         return .init(condition: newer ? .newerThanDays(days) : .olderThanDays(days),
                      evidence: newer ? "de menos de \(days) días" : "de más de \(days) días",

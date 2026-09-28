@@ -34,6 +34,10 @@ final class MailAI: ObservableObject {
 
     func refreshAvailability() { availability = model.availability }
 
+    /// Worth calling when a view that will ask something opens: the first answer costs seconds that
+    /// a warm one doesn't.
+    func prewarm() { model.prewarm() }
+
     // MARK: - Reading help
 
     /// Two lines about a mail, for deciding whether to open it now.
@@ -70,8 +74,11 @@ final class MailAI: ObservableObject {
 
     /// Turns «mueve a Facturas los correos de mi gestoría» into a rule the user reviews in the
     /// editor before it ever runs, by asking one closed question at a time (`RuleInterview`).
-    func rule(from instruction: String, accounts: [String], mailboxes: [String]) async throws -> Rule {
-        try await RuleInterview(model: model, accounts: accounts, mailboxes: mailboxes).rule(from: instruction)
+    func rule(from instruction: String, accounts: [String], mailboxes: [String],
+              scope: [RuleCondition] = []) async throws -> Rule {
+        var interview = RuleInterview(model: model, accounts: accounts, mailboxes: mailboxes)
+        interview.scope = scope
+        return try await interview.rule(from: instruction)
     }
 
     /// The first attempt, kept because it is the yardstick: it asks for the whole rule in one

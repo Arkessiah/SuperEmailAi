@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// Ask AI (v1, rule-based): type a natural-language cleanup instruction; it's
-/// parsed into a filter, previewed with a live count, then executed via the
-/// bulk engine. 100% local, no model.
+/// Ask AI: type an instruction in plain Spanish and get one of two things out of it — a one-off
+/// cleanup right now, parsed locally with no model at all and previewed with a live count, or a
+/// **rule** that keeps doing it, built by asking the on-device model one closed question at a time
+/// (`RuleInterview`) and handed to the editor for the user to read before it ever runs.
 struct AskAIView: View {
     @EnvironmentObject var manager: MailManager
     @Environment(\.dismiss) private var dismiss
@@ -12,6 +13,9 @@ struct AskAIView: View {
     @State private var count: Int?
     @State private var isCounting = false
     @State private var isWorking = false
+    @State private var proposed: Rule?
+    @State private var isAsking = false
+    @State private var aiProblem: String?
 
     private let examples = [
         "Borra todo de @nike.com de más de 6 meses",
@@ -54,7 +58,17 @@ struct AskAIView: View {
             Divider()
 
             Group {
-                if let intent {
+                if isAsking {
+                    HStack {
+                        ProgressView().controlSize(.small)
+                        Text("Preparando la regla…").foregroundStyle(.secondary)
+                    }
+                } else if let aiProblem {
+                    Label(aiProblem, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                        .font(.subheadline)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if let intent {
                     if isCounting {
                         HStack { ProgressView().controlSize(.small); Text("Calculando…").foregroundStyle(.secondary) }
                     } else if intent.isEmpty {
@@ -83,10 +97,26 @@ struct AskAIView: View {
             }
             .frame(minHeight: 40, alignment: .leading)
 
+            if canMakeRules {
+                Text("«Crear regla» no limpia nada ahora: propone una regla que lo siga haciendo, "
+                     + "limitada a \(scope), y te la abre para que la leas antes de encenderla.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if !inTrash {
+                Label(manager.aiAvailability.message, systemImage: "sparkles.slash")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             HStack {
                 Button("Cancelar") { dismiss() }
                 Spacer()
                 Button("Interpretar", action: interpret)
+                if canMakeRules {
+                    Button("Crear regla", action: askForRule)
+                        .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty || isAsking)
+                }
                 Button(role: .destructive) {
                     guard let intent else { return }
                     isWorking = true
@@ -101,6 +131,33 @@ struct AskAIView: View {
         }
         .padding(20)
         .frame(width: 480)
+        // The model takes seconds to load and none to stay loaded, so it's paid for now, while the
+        // user is still typing.
+        .onAppear {
+            manager.ai.refreshAvailability()
+            if manager.aiAvailability.isReady { manager.ai.prewarm() }
+        }
+        // Same way a rule proposed from a message opens (MessageListView): the rules sheet with the
+        // editor already up, so the user lands where the rule will live.
+        .sheet(item: $proposed) { rule in RulesView(prefill: rule) }
+    }
+
+    private var inTrash: Bool { MailboxResolver.trash(in: [manager.currentMailbox]) != nil }
+
+    /// No rules from the Trash: one scoped to it would either do nothing or delete for good.
+    private var canMakeRules: Bool { !inTrash && manager.aiAvailability.isReady }
+
+    private func askForRule() {
+        aiProblem = nil
+        isAsking = true
+        Task {
+            do {
+                proposed = try await manager.proposeRule(from: text)
+            } catch {
+                aiProblem = error.localizedDescription
+            }
+            isAsking = false
+        }
     }
 
     private var scope: String {
@@ -114,6 +171,7 @@ struct AskAIView: View {
         let parsed = manager.parseAICommand(text)
         intent = parsed
         count = nil
+        aiProblem = nil
         guard !parsed.isEmpty else { return }
         Task {
             isCounting = true

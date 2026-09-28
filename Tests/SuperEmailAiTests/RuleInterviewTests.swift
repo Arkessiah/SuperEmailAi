@@ -142,6 +142,43 @@ private func saying(_ script: [String]) -> (ModelPrompt, [String]) -> String {
     #expect(model.questions.isEmpty)
 }
 
+// MARK: - The scope it is born with
+
+@Test @MainActor func theRuleIsBornLookingWhereTheUserWasLooking() async throws {
+    let model = ScriptedModel()
+    model.reply = saying(["archivar"])
+    var interview = RuleInterview(model: model, accounts: ["iCloud"], mailboxes: mailboxes)
+    interview.scope = [.accountIs("iCloud"), .mailboxIs("INBOX")]
+
+    let rule = try await interview.rule(from: "archiva los boletines")
+
+    #expect(rule.conditions == [.accountIs("iCloud"), .mailboxIs("INBOX"), .senderInNewsletters])
+    // The name says what the rule picks, not where it looks.
+    #expect(rule.name == "Archivar boletines")
+    // And the scope is not one more alternative to weigh, so it asked nothing about «todas».
+    #expect(model.questions.count == 1, "preguntó de más: \(model.questions)")
+}
+
+@Test @MainActor func theScopeDoesNotExcuseADeleteByAgeAlone() async {
+    let model = ScriptedModel()
+    model.reply = saying(["borrar"])
+    var interview = RuleInterview(model: model, accounts: ["iCloud"], mailboxes: mailboxes)
+    interview.scope = [.accountIs("iCloud"), .mailboxIs("INBOX")]
+
+    // Two conditions that aren't about the clock are in there, and it is still «delete every old
+    // mail in this mailbox».
+    await #expect(throws: ModelError.self) {
+        try await interview.rule(from: "borra los correos de más de 30 días")
+    }
+}
+
+@Test func aRuleWithNothingButItsScopeIsRefused() {
+    // It would pick every single mail in that mailbox.
+    let rule = Rule(name: "x", isEnabled: false, position: 0, matchMode: .all,
+                    conditions: [.accountIs("iCloud"), .mailboxIs("INBOX")], action: .archive)
+    #expect(throws: ModelError.unclearInstruction) { try RuleSafety.vet(rule) }
+}
+
 // MARK: - The safety net on its own
 
 @Test func markingAsReadDropsTheConditionThatWouldAnnulTheRule() throws {

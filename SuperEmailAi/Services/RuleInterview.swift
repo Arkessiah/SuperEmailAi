@@ -13,6 +13,10 @@ struct RuleInterview {
     let model: LanguageModel
     let accounts: [String]
     let mailboxes: [String]
+    /// Conditions the caller already knows: the account and mailbox the user was looking at when
+    /// they typed. They bind the rule (`RuleCondition.isScope`, always ANDed by `RuleEngine`) and
+    /// stay out of its name, which says what the rule picks and not where it looks.
+    var scope: [RuleCondition] = []
 
     /// Shown to the model and mapped back here. `move` carries no destination yet: that is a
     /// question of its own.
@@ -33,16 +37,18 @@ struct RuleInterview {
             action = .move(account: try account(in: sketch), mailbox: try await mailbox(in: sketch, instruction))
         }
 
-        var conditions = sketch.certain
+        var chosen = sketch.certain
         for candidate in sketch.uncertain where try await belongs(candidate, instruction) {
-            conditions.append(candidate.condition)
+            chosen.append(candidate.condition)
         }
-        guard !conditions.isEmpty else { throw ModelError.unclearInstruction }
+        guard !chosen.isEmpty else { throw ModelError.unclearInstruction }
 
-        let matchMode = conditions.count > 1 ? try await askMatchMode(instruction, conditions) : .all
-        return try RuleSafety.vet(Rule(name: RuleWording.name(action: action, conditions: conditions),
+        // Only what the rule picks decides «todas» or «al menos una»; the scope is never one of the
+        // alternatives, so it isn't counted here either.
+        let matchMode = chosen.count > 1 ? try await askMatchMode(instruction, chosen) : .all
+        return try RuleSafety.vet(Rule(name: RuleWording.name(action: action, conditions: chosen),
                                        isEnabled: false, position: 0, matchMode: matchMode,
-                                       conditions: conditions, action: action))
+                                       conditions: scope.filter(\.isScope) + chosen, action: action))
     }
 
     // MARK: - The questions
@@ -114,17 +120,21 @@ enum RuleSafety {
             vetted.conditions.removeAll { $0 == .isRead(true) }
             vetted.name = RuleWording.name(action: vetted.action, conditions: vetted.conditions)
         }
-        guard !vetted.conditions.isEmpty else { throw ModelError.unclearInstruction }
 
-        // A delete that can fire on the clock alone empties the account as the mail ages. Measured:
-        // «borra los boletines de más de 30 días» came back as just «más de 30 días» in two runs out
-        // of three, and «alguna» does the same damage with the newsletter condition still in place.
+        // Only what the rule *picks* counts here. The account and the mailbox say where it looks,
+        // and a delete that looks somewhere and picks by the clock alone is the dangerous rule with
+        // two extra conditions on it.
+        let picks = vetted.conditions.filter { !$0.isScope }
+        guard !picks.isEmpty else { throw ModelError.unclearInstruction }
+
+        // Measured: «borra los boletines de más de 30 días» came back as just «más de 30 días» in
+        // two runs out of three, and «al menos una» does the same damage with the newsletter
+        // condition still in place.
         if rule.action == .delete {
-            let clockOnly = vetted.conditions.allSatisfy(\.looksOnlyAtTheClock)
-            if clockOnly {
+            if picks.allSatisfy(\.looksOnlyAtTheClock) {
                 throw ModelError.tooBroad("borraría cualquier correo por su antigüedad, sin mirar de quién es")
             }
-            if vetted.matchMode == .any, vetted.conditions.contains(where: \.looksOnlyAtTheClock) {
+            if vetted.matchMode == .any, picks.contains(where: \.looksOnlyAtTheClock) {
                 throw ModelError.tooBroad("con «al menos una» borraría cualquier correo antiguo")
             }
         }
