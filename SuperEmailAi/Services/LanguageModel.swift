@@ -102,6 +102,12 @@ enum ModelError: LocalizedError, Equatable {
     /// The mailbox is right but not which account it belongs to, usually because the instruction
     /// never said. Only the user can settle that one.
     case missingAccount(mailbox: String)
+    /// The sentence never said which mail to pick. Not a failure of the model: the user has to
+    /// say more.
+    case unclearInstruction
+    /// A rule that would act on far more mail than the sentence asked for. Refused rather than
+    /// shown, because in the editor it looks perfectly reasonable.
+    case tooBroad(String)
     /// The mail didn't fit the model's context window, even after being trimmed.
     case tooLong
     /// The model's own safety rules stopped it. Seen with mail that carries insults or
@@ -114,6 +120,8 @@ enum ModelError: LocalizedError, Equatable {
         case .unavailable(let why): why.message
         case .badAnswer(let detail): "La IA respondió algo que no se entiende: \(detail)"
         case .missingAccount(let mailbox): "La IA propone mover a «\(mailbox)», pero no sabe de qué cuenta: elígela tú"
+        case .unclearInstruction: "No he entendido a qué correos te refieres. Dilo con un remitente, un dominio o una antigüedad"
+        case .tooBroad(let detail): "No propongo esa regla porque \(detail)"
         case .tooLong: "El correo es demasiado largo para la IA"
         case .refused: "La IA se ha negado a procesar este correo"
         case .engineFailed(let detail): "La IA ha fallado: \(detail)"

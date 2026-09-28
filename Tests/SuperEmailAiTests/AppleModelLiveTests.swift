@@ -130,7 +130,9 @@ private func summaryTalksAboutTheMail(sample: Sample) async throws {
 
 @Test func rulesComeOutOfPlainSpanish() async throws {
     let ai = MailAI(model: ModelEngine.best())
-    let accounts = ["iCloud", "Trabajo"]
+    // One account on purpose: with several, a sentence that names only the folder stops and asks
+    // the user which account, which is the right behaviour and is covered by RuleInterviewTests.
+    let accounts = ["Trabajo"]
     let mailboxes = ["INBOX", "Facturas", "Archivo"]
     /// Asks, prints, and hands back the rule — or nothing, if the answer was rejected. A rejection
     /// is a result too: it means the validation held and the prompt needs work. What must never
@@ -149,15 +151,12 @@ private func summaryTalksAboutTheMail(sample: Sample) async throws {
         }
     }
 
-    // The account is not checked: the instruction doesn't name one, so whatever the model puts
-    // there is a guess. Either it guesses a real account or `missingAccount` sends the question
-    // to the user; both are fine, inventing one is not.
     if let rule = await propose("mueve a Facturas los correos de gestoria-lopez.es") {
         guard case .move(let account, let mailbox) = rule.action else {
             Issue.record("debería mover, y hace \(rule.action)"); return
         }
         #expect(mailbox == "Facturas")
-        #expect(accounts.contains(account), "una cuenta inventada no debería haber pasado")
+        #expect(account == "Trabajo", "la cuenta no se adivina, se rellena cuando solo hay una")
         #expect(rule.conditions.contains(.domainIs("gestoria-lopez.es")))
     }
 
@@ -178,6 +177,34 @@ private func summaryTalksAboutTheMail(sample: Sample) async throws {
                 "el remitente se ha perdido: \(rule.conditions)")
         // Asking for read mail turns «mark as read» into a rule that does nothing.
         #expect(!rule.conditions.contains(.isRead(true)), "la condición sobra y anula la regla")
+    }
+}
+
+/// The two ways of building a rule, on the same sentences, side by side. It asserts nothing about
+/// the one-shot path — it is the yardstick, and it is allowed to fail. What it prints is what goes
+/// into `DOC/ES/medidas-ia-en-el-aparato.md`, so the choice stays a measurement and not a memory.
+@Test func theTwoWaysOfBuildingARuleSideBySide() async throws {
+    let ai = MailAI(model: ModelEngine.best())
+    let accounts = ["Trabajo"]
+    let mailboxes = ["INBOX", "Facturas", "Archivo"]
+    let sentences = ["mueve a Facturas los correos de gestoria-lopez.es",
+                     "borra los boletines de más de 30 días",
+                     "marca como leídos los avisos de notificaciones@ejemplo.com",
+                     "archiva lo que pese más de 5 MB y tenga más de un año"]
+
+    for sentence in sentences {
+        print("· «\(sentence)»")
+        for (name, build) in [("un tiro    ", ai.ruleInOneGo), ("entrevista ", ai.rule)] {
+            let started = Date()
+            do {
+                let rule = try await build(sentence, accounts, mailboxes)
+                print("  \(name) \(String(format: "%5.1f", Date().timeIntervalSince(started)))s "
+                      + "\(rule.matchMode) · \(rule.conditions) · \(rule.action)")
+            } catch {
+                print("  \(name) \(String(format: "%5.1f", Date().timeIntervalSince(started)))s "
+                      + "rechazada: \(error.localizedDescription)")
+            }
+        }
     }
 }
 

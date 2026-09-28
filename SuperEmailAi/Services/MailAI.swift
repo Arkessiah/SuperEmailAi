@@ -69,8 +69,14 @@ final class MailAI: ObservableObject {
     // MARK: - Rules in plain language (ARK-208)
 
     /// Turns «mueve a Facturas los correos de mi gestoría» into a rule the user reviews in the
-    /// editor before it ever runs.
+    /// editor before it ever runs, by asking one closed question at a time (`RuleInterview`).
     func rule(from instruction: String, accounts: [String], mailboxes: [String]) async throws -> Rule {
+        try await RuleInterview(model: model, accounts: accounts, mailboxes: mailboxes).rule(from: instruction)
+    }
+
+    /// The first attempt, kept because it is the yardstick: it asks for the whole rule in one
+    /// answer, which is what the bench compares the interview against. Not used by the app.
+    func ruleInOneGo(from instruction: String, accounts: [String], mailboxes: [String]) async throws -> Rule {
         let prompt = ModelPrompt(
             role: "Conviertes instrucciones de un usuario en reglas de correo. Respondes solo con JSON.",
             fields: [.init(name: "instruccion", value: instruction),

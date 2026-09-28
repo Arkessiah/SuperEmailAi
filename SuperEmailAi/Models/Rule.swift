@@ -55,6 +55,16 @@ extension RuleCondition {
         }
     }
 
+    /// Conditions that look at nothing but the clock. A rule picking mail by these alone grows to
+    /// cover the whole mailbox as the mail ages, which is why an AI-proposed delete can't rest on
+    /// them (see `RuleSafety`).
+    var looksOnlyAtTheClock: Bool {
+        switch self {
+        case .olderThanDays, .newerThanDays: true
+        default: false
+        }
+    }
+
     /// Conditions whose answer can change after the mail arrived, so a message that didn't
     /// match today may match tomorrow and has to be looked at again.
     var changesOverTime: Bool {
