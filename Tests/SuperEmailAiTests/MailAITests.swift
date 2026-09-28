@@ -37,6 +37,37 @@ private let mailboxes = ["INBOX", "Facturas", "Archive"]
     #expect(!prompt.text.contains("factura</correo>"))
 }
 
+@Test @MainActor func theTaskComesAfterTheMail() async throws {
+    // Measured on Apple's model: with the mail last, an order inside it becomes the request.
+    let model = FakeModel()
+    model.reply = "vale"
+    _ = try await MailAI(model: model).summary(subject: "Factura", sender: "ana@x.com", html: nil, plain: "cuerpo")
+
+    let prompt = try #require(model.prompts.first)
+    let mail = try #require(prompt.body.range(of: "<correo>"))
+    let task = try #require(prompt.body.range(of: "Resume en español"))
+    #expect(mail.lowerBound < task.lowerBound)
+    // And the role never argues with the mail: that wording makes the model refuse outright.
+    #expect(!prompt.role.lowercased().contains("ignora"))
+}
+
+@Test func aClosedListHoldsTheEngineToIt() {
+    #expect(ModelChoice.match("Boletines", in: ["Boletines", "Importante"]) == "Boletines")
+    #expect(ModelChoice.match("  boletines\n", in: ["Boletines", "Importante"]) == "Boletines")
+    #expect(ModelChoice.match("Creo que es Boletines.", in: ["Boletines", "Importante"]) == "Boletines")
+    // Naming both is not choosing, and inventing a third one is not either.
+    #expect(ModelChoice.match("puede ser Boletines o Importante", in: ["Boletines", "Importante"]) == nil)
+    #expect(ModelChoice.match("Facturas", in: ["Boletines", "Importante"]) == nil)
+    // Asked for «boletín» the model answers «boletin»: a tilde is not a wrong answer.
+    #expect(ModelChoice.match("boletin", in: ["boletín", "factura"]) == "boletín")
+    #expect(ModelChoice.match("Es una FACTURA", in: ["boletín", "factura"]) == "factura")
+}
+
+@Test func theEngineSaysWhyItCannotBeUsed() {
+    // Whatever this Mac can do, the reason is always something the screen can show.
+    #expect(!ModelEngine.best().availability.message.isEmpty)
+}
+
 @Test @MainActor func nothingIsAskedWhenTheModelIsNotAvailable() async {
     let model = FakeModel()
     model.availability = .notEnabled
