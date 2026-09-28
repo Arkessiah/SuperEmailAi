@@ -67,26 +67,35 @@ private enum AppleEngine {
         }
     }
 
-    /// Guided generation needs a *struct* to aim at. A bare `@Generable enum` looks like the
-    /// obvious fit and is a trap: measured 2026-09-28, classifying six mails straight into an enum
-    /// got 0 of 6 right, answering the first case almost every time. The same six, through this
-    /// wrapper with the options named in the task, got 5 of 6 — and the miss was arguable.
-    @Generable struct Choice {
-        @Guide(description: "Una de las opciones dadas, escrita tal cual") var opcion: String
-    }
-
+    /// The list is turned into a schema at runtime, so the engine cannot answer outside it — it is
+    /// not asked nicely and checked afterwards, it is decoded into the list.
+    ///
+    /// Two dead ends, both measured on 2026-09-28. Asking in plain text and parsing the reply got
+    /// 4 of 6 mails classified right, and one of the misses was only a missing accent. Aiming at a
+    /// bare `@Generable enum` got **0 of 6**: it answered the first case of the enum almost every
+    /// time. `@Generable` also needs a macro the Command Line Tools toolchain doesn't carry, which
+    /// breaks a plain `swift build`; this way there is no macro at all.
     static func choose(_ prompt: ModelPrompt, from options: [String]) async throws -> String {
+        guard !options.isEmpty else { throw ModelError.badAnswer("sin opciones que elegir") }
         var asked = prompt
-        asked.task = "\(prompt.task)\n\nElige una de estas opciones, tal cual: \(options.joined(separator: ", "))."
-        let session = LanguageModelSession(instructions: prompt.role)
+        asked.task = "\(prompt.task)\n\nElige una de estas opciones: \(options.joined(separator: ", "))."
         let answer: String
         do {
-            answer = try await session.respond(to: asked.body, generating: Choice.self).content.opcion
+            let list = DynamicGenerationSchema(name: "Eleccion", anyOf: options)
+            let wrapper = DynamicGenerationSchema(
+                name: "Respuesta",
+                properties: [.init(name: "opcion", description: "La opción elegida", schema: list)])
+            let schema = try GenerationSchema(root: wrapper, dependencies: [])
+            let session = LanguageModelSession(instructions: prompt.role)
+            let content = try await session.respond(to: asked.body, schema: schema).content
+            answer = try content.value(String.self, forProperty: "opcion")
         } catch let error as LanguageModelSession.GenerationError {
             throw translate(error)
         } catch {
             throw ModelError.engineFailed(error.localizedDescription)
         }
+        // The schema should make this impossible; it stays because a rule built on a wrong answer
+        // costs far more than a thrown error.
         guard let match = ModelChoice.match(answer, in: options) else {
             throw ModelError.badAnswer("«\(answer)» no está entre las opciones")
         }
