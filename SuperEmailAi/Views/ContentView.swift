@@ -121,7 +121,7 @@ struct ContentView: View {
                 } label: {
                     Label("Ask AI", systemImage: "sparkles")
                 }
-                .help("Limpieza por instrucción en lenguaje natural (local)")
+                .help("Dilo en español: limpia ahora, o crea una regla que lo siga haciendo")
             }
             ToolbarItem(placement: .automatic) {
                 Button {
