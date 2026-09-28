@@ -52,8 +52,13 @@ final class BulkUnsubscriber {
     }
 
     /// Senders from the index (most mail first) and how each lets you unsubscribe, if known.
-    func senders(minMessages: Int = 1) -> (stats: [SenderStat], cache: [String: SenderUnsubscribe]) {
-        ((try? store.senderStats(minMessages: minMessages)) ?? [], (try? store.unsubscribeCache()) ?? [:])
+    /// Read off the main thread: these are aggregate queries over the whole index and on a big
+    /// mailbox they froze the screen while «Boletines» opened (ARK-229).
+    func senders(minMessages: Int = 1) async -> (stats: [SenderStat], cache: [String: SenderUnsubscribe]) {
+        let store = store
+        return await Task.detached(priority: .userInitiated) {
+            ((try? store.senderStats(minMessages: minMessages)) ?? [], (try? store.unsubscribeCache()) ?? [:])
+        }.value
     }
 
     /// How a sender lets you unsubscribe: remembered, or read from its latest message's

@@ -82,7 +82,7 @@ struct BoletinesView: View {
         }
         .padding(20)
         .frame(width: 740, height: 600)
-        .task { reload() }
+        .task { await reload() }
         .confirmationDialog("¿Darse de baja de \(selection.count) remitentes?", isPresented: $confirming) {
             Button(cleanup == .delete ? "Darse de baja y borrar" : "Darse de baja",
                    role: cleanup == .delete ? .destructive : nil) {
@@ -212,11 +212,11 @@ struct BoletinesView: View {
         result = await manager.bulkUnsubscribe.run(senders: Array(selection), cleanup: cleanup)
         selection.removeAll()
         isRunning = false
-        reload()
+        await reload()
     }
 
-    private func reload() {
-        let data = manager.bulkUnsubscribe.senders()
+    private func reload() async {
+        let data = await manager.bulkUnsubscribe.senders()
         stats = data.stats
         cache = data.cache
     }

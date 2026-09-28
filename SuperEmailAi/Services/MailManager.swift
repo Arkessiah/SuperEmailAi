@@ -25,6 +25,7 @@ final class MailManager: ObservableObject {
 
     @Published var searchText: String = "" { didSet { runIndexSearch(); applyFilters() } }
     @Published var searchResults: [MailMessage]? = nil   // global FTS results (nil = not searching)
+    private var searchTask: Task<Void, Never>?
     @Published var selectedSender: SenderGroup? = nil
     @Published var selectedMessages: Set<String> = []
 
@@ -1225,9 +1226,20 @@ final class MailManager: ObservableObject {
     }
 
     /// Global full-text search over the SQLite index (FTS5). Empty query exits search.
+    /// Searches the whole index off the main thread, so typing doesn't stutter on a big index;
+    /// each keystroke cancels the search before it (ARK-229).
     func runIndexSearch() {
         let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        searchResults = q.isEmpty ? nil : store.search(query: q, limit: 1000)
+        searchTask?.cancel()
+        guard !q.isEmpty else { searchResults = nil; return }
+        let store = store
+        searchTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 150_000_000)   // let the typing settle
+            guard !Task.isCancelled else { return }
+            let hits = await Task.detached(priority: .userInitiated) { store.search(query: q, limit: 1000) }.value
+            guard !Task.isCancelled else { return }
+            self?.searchResults = hits
+        }
     }
 
     private func applyFilters() {

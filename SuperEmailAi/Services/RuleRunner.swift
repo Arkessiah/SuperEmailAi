@@ -1,5 +1,19 @@
 import SwiftUI
 
+/// How far a long run has got.
+struct RuleProgress: Equatable {
+    var done: Int
+    var total: Int
+}
+
+extension Array {
+    /// Splits into chunks of at most `size`, to keep each AppleScript short (ARK-229).
+    func chunked(into size: Int) -> [[Element]] {
+        guard size > 0, count > size else { return isEmpty ? [] : [self] }
+        return stride(from: 0, to: count, by: size).map { Array(self[$0..<Swift.min($0 + size, count)]) }
+    }
+}
+
 /// A pause the user has to see (safety brake or repeated failures).
 struct RuleNotice: Identifiable, Equatable {
     let id = UUID()
@@ -24,6 +38,12 @@ final class RuleRunner: ObservableObject {
     @Published private(set) var notices: [RuleNotice] = []
     @Published private(set) var history: [RuleRun] = []
     @Published var lastError: String?
+    /// Visible progress of a long run, so a big «Aplicar a lo que ya hay» isn't a frozen wait.
+    @Published private(set) var progress: RuleProgress?
+
+    /// Ids per AppleScript. A single script with thousands of ids holds the serial queue for
+    /// minutes with nothing on screen (ARK-229).
+    static let batchSize = 200
 
     static let brakeLimit = 25
     static let failureLimit = 3
@@ -218,22 +238,32 @@ final class RuleRunner: ObservableObject {
         var failedRules = Set<String>(), okRules = Set<String>()
 
         let groups = Dictionary(grouping: planned) { "\($0.0.id)\u{1}\($0.2.account)\u{1}\($0.2.mailbox)" }
+        var done = 0
+        if planned.count > Self.batchSize { progress = RuleProgress(done: 0, total: planned.count) }
+        defer { progress = nil }
+
         for items in groups.values {
             let rule = items[0].0, account = items[0].2.account, mailbox = items[0].2.mailbox
             let ids = items.map { $0.2.messageId }
             var okIds = Set<Int>(), rfc: [Int: String] = [:], target: String?, failure: String?
             do {
-                switch rule.action {
-                case .markRead:
-                    okIds = Set(try await bridge.apply(.setRead(true), ids: ids, mailbox: mailbox, account: account))
-                case .flag:
-                    okIds = Set(try await bridge.apply(.setFlag(true), ids: ids, mailbox: mailbox, account: account))
-                case .move, .archive, .delete:
-                    target = try resolveTarget(rule.action, account: account)
-                    rfc = try await bridge.rfcMessageIDs(ids: ids, mailbox: mailbox, account: account)
-                    let undoable = ids.filter { rfc[$0] != nil }
-                    let op: MailBridge.BridgeOp = rule.action == .delete ? .delete : .move(to: target ?? "")
-                    okIds = Set(try await bridge.apply(op, ids: undoable, mailbox: mailbox, account: account))
+                if rule.action.isDisplacing { target = try resolveTarget(rule.action, account: account) }
+                // In batches: each AppleScript stays short and the screen keeps moving.
+                for chunk in ids.chunked(into: Self.batchSize) {
+                    switch rule.action {
+                    case .markRead:
+                        okIds.formUnion(try await bridge.apply(.setRead(true), ids: chunk, mailbox: mailbox, account: account))
+                    case .flag:
+                        okIds.formUnion(try await bridge.apply(.setFlag(true), ids: chunk, mailbox: mailbox, account: account))
+                    case .move, .archive, .delete:
+                        let found = try await bridge.rfcMessageIDs(ids: chunk, mailbox: mailbox, account: account)
+                        rfc.merge(found) { current, _ in current }
+                        let undoable = chunk.filter { found[$0] != nil }
+                        let op: MailBridge.BridgeOp = rule.action == .delete ? .delete : .move(to: target ?? "")
+                        okIds.formUnion(try await bridge.apply(op, ids: undoable, mailbox: mailbox, account: account))
+                    }
+                    done += chunk.count
+                    if progress != nil { progress = RuleProgress(done: done, total: planned.count) }
                 }
             } catch {
                 failure = error.localizedDescription

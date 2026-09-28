@@ -38,6 +38,13 @@ struct RulesView: View {
             HStack {
                 Text("Reglas").font(.title2.bold())
                 Spacer()
+                if let progress = rules.progress {
+                    ProgressView(value: Double(progress.done), total: Double(max(progress.total, 1)))
+                        .frame(width: 120)
+                    Text("Aplicando… \(progress.done) de \(progress.total)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Picker("", selection: $tab) {
                     Text("Reglas").tag(0)
                     Text("Historial").tag(1)

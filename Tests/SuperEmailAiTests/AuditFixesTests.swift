@@ -74,6 +74,32 @@ import Testing
     #expect(!RuleCondition.senderIs("a@x.com").isScope)
 }
 
+// MARK: - Rendimiento (ARK-229)
+
+@Test func chunkingKeepsEveryItemAndRespectsTheSize() {
+    #expect([1, 2, 3, 4, 5].chunked(into: 2) == [[1, 2], [3, 4], [5]])
+    #expect([1, 2].chunked(into: 5) == [[1, 2]])
+    #expect([Int]().chunked(into: 3).isEmpty)
+}
+
+@Test @MainActor func aBigManualRunGoesInBatches() async throws {
+    let store = try MessageStore(queue: DatabaseQueue()), mail = FakeMail()
+    let runner = RuleRunner(store: store, bridge: mail, context: { ctx() },
+                            mailboxesOf: { _ in ["INBOX"] }, onApplied: { _, _ in })
+    let mail250 = (1...250).map { n in
+        MailMessage(id: "iCloud-INBOX-\(n)", subject: "s\(n)", sender: "Ana", senderAddress: "ana@example.com",
+                    dateSent: fixedNow, dateReceived: fixedNow, isRead: false, mailbox: "INBOX",
+                    account: "iCloud", messageId: n)
+    }
+    try store.upsertNow(mail250)
+
+    let applied = await runner.applyToExisting(rule([.senderIs("ana@example.com")], action: .markRead))
+    #expect(applied == 250)
+    // Two scripts (200 + 50), not one that holds Mail's queue for minutes.
+    #expect(mail.applied.count == 2)
+    #expect(mail.applied.allSatisfy { $0.1.count <= RuleRunner.batchSize })
+}
+
 @Test func askAIRefusesCategoriesItCannotHonour() {
     // Without a sender, «boletines» would delete matching mail from every sender.
     #expect(MailManager.parseCommand("borra boletines de más de 6 meses no leídos").isEmpty)
