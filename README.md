@@ -32,7 +32,7 @@ swift build
 .build/debug/SuperEmailAi
 ```
 
-The code, executable and Swift module keep the internal name `SuperEmailAi`; only the installed app is called *Super Email Organizer*. To build the bundle and install it in `/Applications`: `bash scripts/install-app.sh`.
+The code, executable and Swift module keep the internal name `SuperEmailAi`; the installed app is *SuperEmail* (short enough to fit under the icon) and the window shows the full name, *Super Email Organizer*. To build the bundle and install it in `/Applications`: `bash scripts/install-app.sh`.
 
 On first launch, macOS will ask for permission to **control Mail.app** (Apple Events / Automation). This is required for the app to read and manage your messages. Grant it under *System Settings → Privacy & Security → Automation*.
 

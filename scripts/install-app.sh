@@ -8,10 +8,10 @@ set -e
 cd "$(dirname "$0")/.."
 
 BUNDLE_ID="com.obsidiaan.superemailai"
-APP_NAME="Super Email Organizer"
+APP_NAME="SuperEmail"
 DEST="/Applications/$APP_NAME.app"
-# Where it was installed before the rename to the commercial name.
-OLD_DEST="/Applications/SuperEmailAi.app"
+# Where earlier names installed it.
+OLD_DESTS="/Applications/SuperEmailAi.app:/Applications/Super Email Organizer.app"
 
 if [ ! -w /Applications ]; then
     echo "No puedo escribir en /Applications. Ejecuta: sudo bash scripts/install-app.sh"
@@ -38,10 +38,14 @@ if pgrep -x SuperEmailAi >/dev/null 2>&1; then
 fi
 
 # Two copies with the same bundle id confuse Launchpad and the Automation permission.
-if [ -d "$OLD_DEST" ] && is_ours "$OLD_DEST"; then
-    rm -rf "$OLD_DEST"
-    echo "Quitada la copia con el nombre anterior ($OLD_DEST)"
-fi
+OLD_IFS=$IFS; IFS=:
+for OLD in $OLD_DESTS; do
+    if [ -d "$OLD" ] && is_ours "$OLD"; then
+        rm -rf "$OLD"
+        echo "Quitada la copia con un nombre anterior ($OLD)"
+    fi
+done
+IFS=$OLD_IFS
 
 rm -rf "$DEST"
 cp -R "build/$APP_NAME.app" "$DEST"

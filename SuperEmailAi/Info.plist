@@ -5,9 +5,9 @@
     <key>CFBundleIdentifier</key>
     <string>com.obsidiaan.superemailai</string>
     <key>CFBundleName</key>
-    <string>Super Email Organizer</string>
+    <string>SuperEmail</string>
     <key>CFBundleDisplayName</key>
-    <string>Super Email Organizer</string>
+    <string>SuperEmail</string>
     <key>CFBundleExecutable</key>
     <string>SuperEmailAi</string>
     <key>CFBundlePackageType</key>
