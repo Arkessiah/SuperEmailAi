@@ -63,7 +63,7 @@ struct HomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Bienvenido a SuperEmailAi")
+                    Text("Bienvenido a Super Email Organizer")
                         .font(.largeTitle.bold())
                     Text("Tu correo, más limpio y más inteligente.")
                         .font(.title3)

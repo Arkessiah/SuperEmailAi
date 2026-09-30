@@ -1,15 +1,16 @@
 #!/bin/sh
-# Builds build/SuperEmailAi.app: release binary, Info.plist, icon and an ad hoc signature.
+# Builds "build/Super Email Organizer.app": release binary, Info.plist, icon and an ad hoc signature.
+# Only the bundle carries the commercial name; the executable, module and bundle id stay SuperEmailAi.
 # Ad hoc signing changes with every build, so macOS may ask again for permission to control Mail.
 # The app stays local: never copy it into Dropbox or any synced folder.
 set -e
 cd "$(dirname "$0")/.."
 
-APP=build/SuperEmailAi.app
+APP="build/Super Email Organizer.app"
 swift build -c release
 BIN="$(swift build -c release --show-bin-path)"
 
-rm -rf "$APP"
+rm -rf "$APP" build/SuperEmailAi.app
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN/SuperEmailAi" "$APP/Contents/MacOS/"
 cp SuperEmailAi/Info.plist "$APP/Contents/Info.plist"
