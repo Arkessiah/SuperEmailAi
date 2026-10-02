@@ -20,6 +20,8 @@
     <string>1</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
     <key>CFBundleDevelopmentRegion</key>
     <string>es</string>
     <key>LSMinimumSystemVersion</key>
